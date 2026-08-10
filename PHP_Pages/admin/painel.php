@@ -51,6 +51,8 @@ require __DIR__ . "/../../includes/header.php";
     <h2>Gestão</h2>
     <ul>
         <li><a href="competicoes.php">Gerir competições</a></li>
+        <li><a href="juizes.php">Gerir juízes</a></li>
+        <li><a href="atribuicoes.php">Atribuir juízes a competições</a></li>
     </ul>
 </section>
 

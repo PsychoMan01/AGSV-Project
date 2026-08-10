@@ -22,7 +22,8 @@ if (!isset($pageTitle)) {
 
         <nav>
             <ul class="nav-menu">
-                <li><a href="<?php echo BASE_URL; ?>PHP_Pages/index.php">Competições</a></li>
+                <li><a href="<?php echo BASE_URL; ?>PHP_Pages/admin/competicoes.php">Competições (gerir)</a></li>
+                <li><a href="<?php echo BASE_URL; ?>PHP_Pages/admin/juizes.php">Juízes (gerir)</a></li>
 
                 <?php if (isset($_SESSION["user_id"])): ?>
 

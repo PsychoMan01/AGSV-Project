@@ -206,6 +206,8 @@ require __DIR__ . "/../../includes/header.php";
                         <td class="actions-cell">
                             <a class="btn btn-small" href="competicoes.php?action=editar&id=<?php echo $comp['id']; ?>">Editar</a>
 
+                            <a class="btn btn-small" href="atribuicoes.php?competition_id=<?php echo $comp['id']; ?>">Juízes</a>
+
                             <form method="post" action="competicoes.php" class="inline-form">
                                 <input type="hidden" name="acao" value="publicar">
                                 <input type="hidden" name="id" value="<?php echo $comp['id']; ?>">

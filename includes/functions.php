@@ -31,3 +31,20 @@ function formatarData($data) {
     }
     return $partes[2] . "/" . $partes[1] . "/" . $partes[0];
 }
+
+// Lista dos papéis que um juiz pode ter, usada para preencher os <select>
+// nos formulários de juízes e de atribuições.
+function papeis() {
+    return array(
+        "A"  => "A - Artístico",
+        "E"  => "E - Execução",
+        "DB" => "DB - Dificuldade de Corpo",
+        "DA" => "DA - Dificuldade de Aparelho",
+    );
+}
+
+// Nome completo de um papel a partir do código (ex: "DB" -> "DB - Dificuldade de Corpo")
+function papelLabel($codigo) {
+    $lista = papeis();
+    return isset($lista[$codigo]) ? $lista[$codigo] : $codigo;
+}

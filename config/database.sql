@@ -1,6 +1,6 @@
-create database AGSV_db;
+create database if not exists AGSV_db;
 
-create table users (
+create table if not exists users (
 id int auto_increment primary key,
 name varchar(150) not null,
 user_name varchar(100) not null unique,
@@ -11,32 +11,32 @@ status enum('A','I'),
 created_at datetime default current_timestamp
 );
 
-create table clubs (
+create table if not exists clubs (
 id int auto_increment primary key,
 name varchar(150) not null,
 logo varchar(255),
 created_at datetime default current_timestamp
 );
 
-CREATE TABLE escalao (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  nome VARCHAR(100) NOT NULL
+CREATE TABLE if not exists escalao (
+id INT AUTO_INCREMENT PRIMARY KEY,
+nome VARCHAR(100) NOT NULL
 );
 
-create table equipments (
-id auto_increment primary key,
+create table if not exists equipments (
+id int auto_increment primary key,
 name varchar(150) not null,
 description text
 );
 
-create table categories (
+create table if not exists categories (
 id int auto_increment primary key,
 name varchar(150) not null,
 min_age int,
 max_age int
 );
 
-create table competitions (
+create table if not exists competitions (
 status enum('A','I'),
 id int auto_increment primary key,
 name varchar(150) not null,
@@ -44,25 +44,25 @@ location varchar(200),
 start_date date,
 end_date date,
 stream_url varchar(255),
-status tinyint unsigned not null default 1,
 results_published boolean default false,
 created_at datetime default current_timestamp
 );
 
-create table judges (
+create table if not exists judges (
 id int auto_increment primary key,
 user_id int,
+papel enum('A','E','DB','DA'),
 foreign key (user_id) references users(id)
 );
 
-create table scoring_rules(
+create table if not exists scoring_rules (
 id int auto_increment primary key,
 competition_id int,
 method varchar (100),
 foreign key (competition_id) references competitions(id)
-):
+);
 
-create table athletes(
+create table if not exists athletes(
 id int auto_increment primary key,
 name varchar(255) not null,
 birth_date date not null,
@@ -75,12 +75,12 @@ created_at datetime default current_timestamp,
 club_id int,
 user_id int,
 category_id int,
-foreign key (club_id) referneces clubs(id),
+foreign key (club_id) references clubs(id),
 foreign key (user_id) references users(id),
 foreign key (category_id) references categories(id)
 );
 
-creat table event_entries (
+create table if not exists event_entries (
 id int auto_increment primary key,
 competition_id int,
 athlete_id int,
@@ -93,19 +93,20 @@ foreign key(equipment_id) references equipments(id),
 foreign key (category_id) references categories(id)
 );
 
-create table judge_assignments (
+create table if not exists judge_assignments (
 id int auto_increment primary key,
 judge_id int,
 competition_id int,
 equipment_id int,
 category_id int,
+papel enum('A','E','DB','DA') not null,
 foreign key (judge_id) references judges(id),
 foreign key (competition_id) references competitions(id),
 foreign key (equipment_id) references equipments(id),
 foreign key (category_id) references categories(id)
 );
 
-create table competition_schedule (
+create table if not exists competition_schedule (
 id int auto_increment primary key,
 competition_id int,
 category_id int,
@@ -117,7 +118,7 @@ foreign key (category_id) references categories(id),
 foreign key (equipment_id) references equipments(id)
 );
 
-create table scores (
+create table if not exists scores (
 id int auto_increment primary key,
 score_value decimal(5,3),
 status enum('A','I'),
@@ -141,13 +142,13 @@ event_entry_id int,
 athlete_id int,
 judge_id int,
 equipment_id int,
-foreign key (competition_id) references competitions(id)
+foreign key (competition_id) references competitions(id),
 foreign key (event_entry_id) references event_entries(id),
 foreign key (judge_id) references judges(id),
 foreign key (equipment_id) references equipments(id) 
 );
 
-create table rankings (
+create table if not exists rankings (
 id int auto_increment primary key,
 competition_id int,
 category_id int,

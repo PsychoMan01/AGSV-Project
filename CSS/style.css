@@ -108,12 +108,15 @@ main.container {
 .form-card input[type="password"],
 .form-card input[type="date"],
 .form-card input[type="number"],
+.form-card input[type="email"],
+.form-card select,
 .score-card input[type="number"] {
     width: 100%;
     padding: 8px 10px;
     border: 1px solid #ccc;
     border-radius: var(--radius);
     font-size: 1rem;
+    background: #fff;
 }
 
 .checkbox-label {

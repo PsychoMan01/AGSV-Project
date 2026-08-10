@@ -13,7 +13,7 @@ define("BASE_URL", "/");
 // Dados de acesso à base de dados
 $db_host = "localhost";
 $db_user = "root";
-$db_pass = "";
+$db_pass = "mysql";
 $db_name = "AGSV_db";
 
 // Ligação simples ao MySQL
