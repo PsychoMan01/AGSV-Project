@@ -1,7 +1,6 @@
 <?php
 // includes/header.php
 // Topo da página + menu, incluído em todas as páginas do site.
-// A variável $pageTitle pode ser definida antes deste include.
 
 if (!isset($pageTitle)) {
     $pageTitle = APP_NAME;

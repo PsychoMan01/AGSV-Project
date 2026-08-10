@@ -1,6 +1,6 @@
 <?php
 // config/db.php
-// Definições gerais do site + ligação à base de dados (tudo num único ficheiro, como no MestreTech)
+// Definições gerais do site + ligação à base de dados (tudo num único ficheiro)
 
 session_start();
 
@@ -11,13 +11,12 @@ define("APP_NAME", "AGSV - Sistema de Gestão de Competições de Ginástica");
 define("BASE_URL", "/");
 
 // Dados de acesso à base de dados
-// Muda estes valores conforme o teu ambiente (XAMPP, WAMP, servidor, etc.)
 $db_host = "localhost";
 $db_user = "root";
 $db_pass = "";
 $db_name = "AGSV_db";
 
-// Ligação simples ao MySQL (mysqli em modo procedural, sem POO)
+// Ligação simples ao MySQL
 $conn = mysqli_connect($db_host, $db_user, $db_pass, $db_name);
 
 if (!$conn) {
