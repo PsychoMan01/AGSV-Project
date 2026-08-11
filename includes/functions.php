@@ -48,3 +48,19 @@ function papelLabel($codigo) {
     $lista = papeis();
     return isset($lista[$codigo]) ? $lista[$codigo] : $codigo;
 }
+
+// Lista dos géneros disponíveis para um atleta, usada para preencher o <select>
+// no formulário de atletas.
+function generos() {
+    return array(
+        "F"    => "Feminino",
+        "M"    => "Masculino",
+        "N/A"  => "Não aplicável",
+    );
+}
+
+// Nome completo de um género a partir do código (ex: "F" -> "Feminino")
+function generoLabel($codigo) {
+    $lista = generos();
+    return isset($lista[$codigo]) ? $lista[$codigo] : $codigo;
+}
