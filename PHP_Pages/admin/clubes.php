@@ -51,16 +51,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
             $sql = "UPDATE clubs SET name = ?, logo = ? WHERE id = ?";
             $stmt = mysqli_prepare($conn, $sql);
             mysqli_stmt_bind_param($stmt, "ssi", $nome, $logo, $id);
-            mysqli_stmt_execute($stmt);
+            $ok = mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Clube atualizado com sucesso.");
+            if ($ok) {
+                setFlash("success", "Clube atualizado com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível atualizar o clube.");
+            }
         } else {
             $sql = "INSERT INTO clubs (name, logo) VALUES (?, ?)";
             $stmt = mysqli_prepare($conn, $sql);
             mysqli_stmt_bind_param($stmt, "ss", $nome, $logo);
-            mysqli_stmt_execute($stmt);
+            $ok = mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Clube criado com sucesso.");
+            if ($ok) {
+                setFlash("success", "Clube criado com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível criar o clube.");
+            }
         }
 
         header("Location: clubes.php");

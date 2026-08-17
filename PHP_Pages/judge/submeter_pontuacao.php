@@ -60,17 +60,26 @@ if (!$atribuicao) {
 
 $erros = array();
 
+// O papel desta atribuição diz quais campos este juiz pode pontuar.
+// Ex: um juiz com papel "DB" só vê/pontua DB1 e DB2; um juiz "E" só vê/pontua
+// E1, E2, E3, E4 e penal. Isto evita que um juiz preencha campos que não são
+// da sua responsabilidade.
+$papel_juiz = $atribuicao["papel"];
+$campos_formulario = camposPorPapel($papel_juiz);
+
+// Todos os campos possíveis na tabela "scores" (para sabermos quais ficam a NULL)
+$todos_os_campos = array("DB1", "DB2", "DA1", "DA2", "A1", "A2", "A3", "A4", "E1", "E2", "E3", "E4", "penal");
+
 // --- Quando o formulário de pontuação é submetido ---
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     $event_entry_id = (int) $_POST["event_entry_id"];
 
-    // Estes são os campos de pontuação que o formulário envia
-    $campos = array("DB1", "DB2", "DA1", "DA2", "A1", "A2", "A3", "A4", "E1", "E2", "E3", "E4", "penal");
+    // Só lemos e validamos os campos que pertencem ao papel deste juiz
     $valores = array();
 
-    foreach ($campos as $campo) {
-        $valor = $_POST[$campo];
+    foreach ($campos_formulario as $campo) {
+        $valor = isset($_POST[$campo]) ? $_POST[$campo] : "";
         if ($valor === "" || !is_numeric($valor)) {
             $erros[] = "O campo " . $campo . " tem de ser um número.";
         }
@@ -79,14 +88,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     if (count($erros) == 0) {
 
-        // Fórmula simplificada de pontuação:
-        // Nota final = soma da dificuldade + média da execução - penalizações
-        $dificuldade = $valores["DB1"] + $valores["DB2"] + $valores["DA1"] + $valores["DA2"]
-                     + $valores["A1"] + $valores["A2"] + $valores["A3"] + $valores["A4"];
-
-        $execucao = ($valores["E1"] + $valores["E2"] + $valores["E3"] + $valores["E4"]) / 4;
-
-        $nota_final = round($dificuldade + $execucao - $valores["penal"], 3);
+        // Soma dos campos que este juiz preencheu (só a parte do seu papel).
+        // A nota final do atleta (juntando todos os papéis) só é calculada
+        // mais tarde, quando as classificações da competição são recalculadas.
+        $subtotal = 0;
+        foreach ($campos_formulario as $campo) {
+            if ($campo != "penal") {
+                $subtotal += $valores[$campo];
+            }
+        }
+        if (isset($valores["penal"])) {
+            $subtotal -= $valores["penal"];
+        }
+        $subtotal = round($subtotal, 3);
 
         // Confirmar que a entrada do atleta pertence mesmo a esta competição/escalão/aparelho
         $sql3 = "SELECT id, athlete_id FROM event_entries
@@ -110,27 +124,74 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
             $athlete_id = $entrada["athlete_id"];
 
-            $sql4 = "INSERT INTO scores
-                        (score_value, status, DB1, DB2, DA1, DA2, A1, A2, A3, A4, E1, E2, E3, E4,
-                         penal, final_score, submitted_at, competition_id, event_entry_id, athlete_id, judge_id, equipment_id)
-                     VALUES
-                        (?, 'A', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)";
+            // Preparar os valores de todos os campos da tabela: os do papel deste
+            // juiz levam o número que ele preencheu, os restantes ficam a NULL
+            // (não são da responsabilidade deste juiz).
+            $valores_bind = array();
+            foreach ($todos_os_campos as $campo) {
+                $valores_bind[$campo] = isset($valores[$campo]) ? $valores[$campo] : null;
+            }
 
-            $stmt4 = mysqli_prepare($conn, $sql4);
+            // Verificar se este juiz já pontuou esta entrada antes. Se já
+            // pontuou, atualizamos a linha existente em vez de criar uma
+            // nova — assim evitamos linhas duplicadas que iriam distorcer
+            // a média calculada em calcularClassificacoes().
+            $sql_existe = "SELECT id FROM scores WHERE event_entry_id = ? AND judge_id = ? LIMIT 1";
+            $stmt_existe = mysqli_prepare($conn, $sql_existe);
+            mysqli_stmt_bind_param($stmt_existe, "ii", $event_entry_id, $judge_id);
+            mysqli_stmt_execute($stmt_existe);
+            $resultado_existe = mysqli_stmt_get_result($stmt_existe);
+            $pontuacao_existente = mysqli_fetch_assoc($resultado_existe);
 
-            mysqli_stmt_bind_param(
-                $stmt4,
-                "ddddddddddddddiiiii",
-                $nota_final,
-                $valores["DB1"], $valores["DB2"], $valores["DA1"], $valores["DA2"],
-                $valores["A1"], $valores["A2"], $valores["A3"], $valores["A4"],
-                $valores["E1"], $valores["E2"], $valores["E3"], $valores["E4"],
-                $valores["penal"], $nota_final,
-                $atribuicao["competition_id"], $event_entry_id, $athlete_id, $judge_id, $atribuicao["equipment_id"]
-            );
+            if ($pontuacao_existente) {
+                // Já existe: atualizar a pontuação já submetida por este juiz
+                $sql4 = "UPDATE scores
+                         SET score_value = ?, DB1 = ?, DB2 = ?, DA1 = ?, DA2 = ?,
+                             A1 = ?, A2 = ?, A3 = ?, A4 = ?, E1 = ?, E2 = ?, E3 = ?, E4 = ?,
+                             penal = ?, submitted_at = NOW()
+                         WHERE id = ?";
+
+                $stmt4 = mysqli_prepare($conn, $sql4);
+
+                mysqli_stmt_bind_param(
+                    $stmt4,
+                    "ddddddddddddddi",
+                    $subtotal,
+                    $valores_bind["DB1"], $valores_bind["DB2"], $valores_bind["DA1"], $valores_bind["DA2"],
+                    $valores_bind["A1"], $valores_bind["A2"], $valores_bind["A3"], $valores_bind["A4"],
+                    $valores_bind["E1"], $valores_bind["E2"], $valores_bind["E3"], $valores_bind["E4"],
+                    $valores_bind["penal"],
+                    $pontuacao_existente["id"]
+                );
+
+                $mensagem_sucesso = "Pontuação (" . papelLabel($papel_juiz) . ") atualizada com sucesso: " . number_format($subtotal, 3, ",", ".") . ".";
+            } else {
+                // Ainda não existe: criar uma nova linha de pontuação
+                $sql4 = "INSERT INTO scores
+                            (score_value, status, papel, DB1, DB2, DA1, DA2, A1, A2, A3, A4, E1, E2, E3, E4,
+                             penal, final_score, submitted_at, competition_id, event_entry_id, athlete_id, judge_id, equipment_id)
+                         VALUES
+                            (?, 'A', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NOW(), ?, ?, ?, ?, ?)";
+
+                $stmt4 = mysqli_prepare($conn, $sql4);
+
+                mysqli_stmt_bind_param(
+                    $stmt4,
+                    "dsdddddddddddddiiiii",
+                    $subtotal,
+                    $papel_juiz,
+                    $valores_bind["DB1"], $valores_bind["DB2"], $valores_bind["DA1"], $valores_bind["DA2"],
+                    $valores_bind["A1"], $valores_bind["A2"], $valores_bind["A3"], $valores_bind["A4"],
+                    $valores_bind["E1"], $valores_bind["E2"], $valores_bind["E3"], $valores_bind["E4"],
+                    $valores_bind["penal"],
+                    $atribuicao["competition_id"], $event_entry_id, $athlete_id, $judge_id, $atribuicao["equipment_id"]
+                );
+
+                $mensagem_sucesso = "Pontuação (" . papelLabel($papel_juiz) . ") submetida com sucesso: " . number_format($subtotal, 3, ",", ".") . ".";
+            }
 
             if (mysqli_stmt_execute($stmt4)) {
-                setFlash("success", "Pontuação submetida com sucesso (nota final: " . number_format($nota_final, 3, ",", ".") . ").");
+                setFlash("success", $mensagem_sucesso);
                 header("Location: submeter_pontuacao.php?assignment_id=" . $assignment_id);
                 exit;
             } else {
@@ -174,7 +235,11 @@ require __DIR__ . "/../../includes/header.php";
     <p>
         <strong>Competição:</strong> <?php echo htmlspecialchars($atribuicao["competition_name"]); ?><br>
         <strong>Escalão:</strong> <?php echo htmlspecialchars($atribuicao["category_name"]); ?><br>
-        <strong>Aparelho:</strong> <?php echo htmlspecialchars($atribuicao["equipment_name"]); ?>
+        <strong>Aparelho:</strong> <?php echo htmlspecialchars($atribuicao["equipment_name"]); ?><br>
+        <strong>O teu papel:</strong> <?php echo htmlspecialchars(papelLabel($papel_juiz)); ?>
+    </p>
+    <p class="hint">
+        Como juiz de <?php echo htmlspecialchars(papelLabel($papel_juiz)); ?>, só precisas de preencher os campos abaixo.
     </p>
 </section>
 
@@ -205,10 +270,7 @@ require __DIR__ . "/../../includes/header.php";
                 <input type="hidden" name="event_entry_id" value="<?php echo $entrada['event_entry_id']; ?>">
 
                 <div class="score-grid">
-                    <?php
-                    $campos_formulario = array("DB1", "DB2", "DA1", "DA2", "A1", "A2", "A3", "A4", "E1", "E2", "E3", "E4", "penal");
-                    foreach ($campos_formulario as $campo):
-                    ?>
+                    <?php foreach ($campos_formulario as $campo): ?>
                         <label>
                             <?php echo $campo; ?>
                             <input type="number" step="0.001" name="<?php echo $campo; ?>" required>
@@ -216,7 +278,9 @@ require __DIR__ . "/../../includes/header.php";
                     <?php endforeach; ?>
                 </div>
 
-                <button type="submit" class="btn btn-primary">Submeter pontuação</button>
+                <button type="submit" class="btn btn-primary">
+                    <?php echo $entrada["ja_pontuado"] > 0 ? "Atualizar pontuação" : "Submeter pontuação"; ?>
+                </button>
             </form>
         </div>
     <?php endforeach; ?>

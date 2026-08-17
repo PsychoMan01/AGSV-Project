@@ -18,11 +18,6 @@ logo varchar(255),
 created_at datetime default current_timestamp
 );
 
-CREATE TABLE if not exists escalao (
-id INT AUTO_INCREMENT PRIMARY KEY,
-nome VARCHAR(100) NOT NULL
-);
-
 create table if not exists equipments (
 id int auto_increment primary key,
 name varchar(150) not null,
@@ -122,20 +117,23 @@ create table if not exists scores (
 id int auto_increment primary key,
 score_value decimal(5,3),
 status enum('A','I'),
-DB1 FLOAT NOT NULL,
-DB2 FLOAT NOT NULL,
-DA1 FLOAT NOT NULL,
-DA2 FLOAT NOT NULL,
-A1 FLOAT NOT NULL,
-A2 FLOAT NOT NULL,
-A3 FLOAT NOT NULL,
-A4 FLOAT NOT NULL,
-E1 FLOAT NOT NULL,
-E2 FLOAT NOT NULL,
-E3 FLOAT NOT NULL,
-E4 FLOAT NOT NULL,
-penal FLOAT NOT NULL,
-final_score FLOAT NOT NULL,
+-- Cada juiz só pontua os campos do seu papel (A, E, DB ou DA), por isso
+-- estas colunas passam a poder ficar a NULL (o que o juiz não avalia).
+papel enum('A','E','DB','DA') not null,
+DB1 FLOAT NULL,
+DB2 FLOAT NULL,
+DA1 FLOAT NULL,
+DA2 FLOAT NULL,
+A1 FLOAT NULL,
+A2 FLOAT NULL,
+A3 FLOAT NULL,
+A4 FLOAT NULL,
+E1 FLOAT NULL,
+E2 FLOAT NULL,
+E3 FLOAT NULL,
+E4 FLOAT NULL,
+penal FLOAT NULL,
+final_score FLOAT NULL,
 submitted_at datetime,
 competition_id int,
 event_entry_id int,
@@ -162,3 +160,27 @@ foreign key (category_id) references categories(id),
 foreign key (equipment_id) references equipments(id),
 foreign key (athlete_id) references athletes(id)
 );
+
+-- ==========================================================================
+-- MIGRAÇÃO (só é preciso correr isto se a base de dados já existia antes
+-- destas alterações, ou seja, se já tinhas a tabela "scores" criada).
+-- Se estás a criar a base de dados de raiz com este ficheiro, podes ignorar.
+-- ==========================================================================
+-- A tabela "escalao" nunca chegou a ser usada (o sistema usa "categories"
+-- para os escalões) — se já a tinhas criado, podes removê-la:
+-- DROP TABLE IF EXISTS escalao;
+-- ALTER TABLE scores ADD COLUMN papel ENUM('A','E','DB','DA') NOT NULL AFTER status;
+-- ALTER TABLE scores MODIFY DB1 FLOAT NULL;
+-- ALTER TABLE scores MODIFY DB2 FLOAT NULL;
+-- ALTER TABLE scores MODIFY DA1 FLOAT NULL;
+-- ALTER TABLE scores MODIFY DA2 FLOAT NULL;
+-- ALTER TABLE scores MODIFY A1 FLOAT NULL;
+-- ALTER TABLE scores MODIFY A2 FLOAT NULL;
+-- ALTER TABLE scores MODIFY A3 FLOAT NULL;
+-- ALTER TABLE scores MODIFY A4 FLOAT NULL;
+-- ALTER TABLE scores MODIFY E1 FLOAT NULL;
+-- ALTER TABLE scores MODIFY E2 FLOAT NULL;
+-- ALTER TABLE scores MODIFY E3 FLOAT NULL;
+-- ALTER TABLE scores MODIFY E4 FLOAT NULL;
+-- ALTER TABLE scores MODIFY penal FLOAT NULL;
+-- ALTER TABLE scores MODIFY final_score FLOAT NULL;

@@ -55,7 +55,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     }
 
     if (count($erros) == 0) {
-        // Evitar criar a mesma atribuição duas vezes
+        // Regra 1: um juiz não pode ter a mesma atribuição duas vezes
+        // (mesmo escalão + aparelho + competição).
         $sql_existe = "SELECT id FROM judge_assignments
                         WHERE judge_id = ? AND competition_id = ? AND category_id = ? AND equipment_id = ?
                         LIMIT 1";
@@ -65,16 +66,37 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
         $resultado_existe = mysqli_stmt_get_result($stmt_existe);
         $ja_existe = mysqli_fetch_assoc($resultado_existe);
 
+        // Regra 2: só pode haver um juiz por cada papel (A, E, DB, DA) em cada
+        // competição. Ou seja, o papel "E" nesta competição tem sempre de ser
+        // o mesmo juiz em todas as atribuições dele, e não pode ser dado a
+        // outro juiz diferente.
+        $juiz_do_papel = null;
+        if (!$ja_existe) {
+            $sql_papel = "SELECT DISTINCT judge_id FROM judge_assignments
+                          WHERE competition_id = ? AND papel = ? AND judge_id != ?
+                          LIMIT 1";
+            $stmt_papel = mysqli_prepare($conn, $sql_papel);
+            mysqli_stmt_bind_param($stmt_papel, "isi", $competition_id, $papel, $judge_id);
+            mysqli_stmt_execute($stmt_papel);
+            $resultado_papel = mysqli_stmt_get_result($stmt_papel);
+            $juiz_do_papel = mysqli_fetch_assoc($resultado_papel);
+        }
+
         if ($ja_existe) {
             setFlash("error", "Este juiz já está atribuído a este escalão/aparelho nesta competição.");
+        } elseif ($juiz_do_papel) {
+            setFlash("error", "Já existe outro juiz atribuído ao papel \"" . papelLabel($papel) . "\" nesta competição. Só pode haver um juiz por papel em cada competição.");
         } else {
             $sql = "INSERT INTO judge_assignments (judge_id, competition_id, category_id, equipment_id, papel)
                     VALUES (?, ?, ?, ?, ?)";
             $stmt = mysqli_prepare($conn, $sql);
             mysqli_stmt_bind_param($stmt, "iiiis", $judge_id, $competition_id, $category_id, $equipment_id, $papel);
-            mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Juiz atribuído com sucesso.");
+            if (mysqli_stmt_execute($stmt)) {
+                setFlash("success", "Juiz atribuído com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível atribuir o juiz. Verifica se o juiz escolhido é válido.");
+            }
         }
 
         header("Location: atribuicoes.php?competition_id=" . $competition_id);
@@ -150,7 +172,7 @@ if (!$competicao) {
 }
 
 // Listas para preencher os <select> do formulário
-$juizes = mysqli_query($conn, "SELECT u.id, u.name, j.papel
+$juizes = mysqli_query($conn, "SELECT j.id, u.name, j.papel
                                 FROM users u
                                 JOIN judges j ON j.user_id = u.id
                                 WHERE u.role = 'JUDGE' AND u.status = 'A'

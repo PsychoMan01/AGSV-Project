@@ -20,9 +20,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     $sql = "DELETE FROM competitions WHERE id = ?";
     $stmt = mysqli_prepare($conn, $sql);
     mysqli_stmt_bind_param($stmt, "i", $id);
-    mysqli_stmt_execute($stmt);
 
-    setFlash("success", "Competição eliminada.");
+    if (mysqli_stmt_execute($stmt)) {
+        setFlash("success", "Competição eliminada.");
+    } else {
+        setFlash("error", "Não foi possível eliminar esta competição porque já tem dados associados (juízes, atletas inscritos, pontuações, etc).");
+    }
+
     header("Location: competicoes.php");
     exit;
 }
@@ -34,9 +38,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     $sql = "UPDATE competitions SET results_published = NOT results_published WHERE id = ?";
     $stmt = mysqli_prepare($conn, $sql);
     mysqli_stmt_bind_param($stmt, "i", $id);
-    mysqli_stmt_execute($stmt);
 
-    setFlash("success", "Estado de publicação atualizado.");
+    if (mysqli_stmt_execute($stmt)) {
+        setFlash("success", "Estado de publicação atualizado.");
+    } else {
+        setFlash("error", "Não foi possível atualizar o estado de publicação.");
+    }
+
+    header("Location: competicoes.php");
+    exit;
+}
+
+// --- Recalcular classificações (rankings) a partir das pontuações submetidas ---
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["acao"] == "calcular") {
+    $id = (int) $_POST["id"];
+
+    calcularClassificacoes($conn, $id);
+
+    setFlash("success", "Classificações recalculadas com sucesso.");
     header("Location: competicoes.php");
     exit;
 }
@@ -52,7 +71,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     $stream_url = trim($_POST["stream_url"]);
 
     // A checkbox só vem no $_POST se estiver marcada
-    $ativa = isset($_POST["status"]) ? 1 : 0;
+    // (a coluna "status" é um ENUM('A','I'), por isso guardamos a letra e não um inteiro)
+    $ativa = isset($_POST["status"]) ? "A" : "I";
 
     if ($nome == "") {
         $erros[] = "O nome da competição é obrigatório.";
@@ -69,19 +89,27 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
                     SET name = ?, location = ?, start_date = ?, end_date = ?, stream_url = ?, status = ?
                     WHERE id = ?";
             $stmt = mysqli_prepare($conn, $sql);
-            mysqli_stmt_bind_param($stmt, "sssssii", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa, $id);
-            mysqli_stmt_execute($stmt);
+            mysqli_stmt_bind_param($stmt, "ssssssi", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa, $id);
+            $ok = mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Competição atualizada com sucesso.");
+            if ($ok) {
+                setFlash("success", "Competição atualizada com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível atualizar a competição. Tenta novamente.");
+            }
         } else {
             // Criar uma nova competição
             $sql = "INSERT INTO competitions (name, location, start_date, end_date, stream_url, status, results_published)
                     VALUES (?, ?, ?, ?, ?, ?, 0)";
             $stmt = mysqli_prepare($conn, $sql);
-            mysqli_stmt_bind_param($stmt, "sssssi", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa);
-            mysqli_stmt_execute($stmt);
+            mysqli_stmt_bind_param($stmt, "ssssss", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa);
+            $ok = mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Competição criada com sucesso.");
+            if ($ok) {
+                setFlash("success", "Competição criada com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível criar a competição. Tenta novamente.");
+            }
         }
 
         header("Location: competicoes.php");
@@ -155,7 +183,7 @@ require __DIR__ . "/../../includes/header.php";
         <label class="checkbox-label">
             <?php
             $marcada = true; // por defeito, uma competição nova começa ativa
-            if ($competicao_a_editar && $competicao_a_editar["status"] != 1) {
+            if ($competicao_a_editar && $competicao_a_editar["status"] != "A") {
                 $marcada = false;
             }
             ?>
@@ -201,12 +229,20 @@ require __DIR__ . "/../../includes/header.php";
                         <td><?php echo htmlspecialchars($comp["location"]); ?></td>
                         <td><?php echo formatarData($comp["start_date"]); ?></td>
                         <td><?php echo formatarData($comp["end_date"]); ?></td>
-                        <td><?php echo $comp["status"] == 1 ? "Ativa" : "Inativa"; ?></td>
+                        <td><?php echo $comp["status"] == "A" ? "Ativa" : "Inativa"; ?></td>
                         <td><?php echo $comp["results_published"] == 1 ? "Publicados" : "Por publicar"; ?></td>
                         <td class="actions-cell">
                             <a class="btn btn-small" href="competicoes.php?action=editar&id=<?php echo $comp['id']; ?>">Editar</a>
 
                             <a class="btn btn-small" href="atribuicoes.php?competition_id=<?php echo $comp['id']; ?>">Juízes</a>
+
+                            <a class="btn btn-small" href="inscricoes.php?competition_id=<?php echo $comp['id']; ?>">Atletas</a>
+
+                            <form method="post" action="competicoes.php" class="inline-form">
+                                <input type="hidden" name="acao" value="calcular">
+                                <input type="hidden" name="id" value="<?php echo $comp['id']; ?>">
+                                <button type="submit" class="btn btn-small">Calcular Classificações</button>
+                            </form>
 
                             <form method="post" action="competicoes.php" class="inline-form">
                                 <input type="hidden" name="acao" value="publicar">

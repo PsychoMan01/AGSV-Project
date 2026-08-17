@@ -50,7 +50,7 @@ require __DIR__ . "/../includes/header.php";
                         <td><?php echo formatarData($comp["start_date"]); ?></td>
                         <td><?php echo formatarData($comp["end_date"]); ?></td>
                         <td>
-                            <?php if ($comp["status"] == 1): ?>
+                            <?php if ($comp["status"] == "A"): ?>
                                 <span class="badge badge-active">Ativa</span>
                             <?php else: ?>
                                 <span class="badge badge-inactive">Inativa</span>

@@ -84,18 +84,26 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
             $stmt = mysqli_prepare($conn, $sql);
             mysqli_stmt_bind_param($stmt, "sssssssiii", $nome, $data_nascimento, $genero, $local_nascimento,
                 $telefone, $email, $foto, $club_id, $category_id_param, $id);
-            mysqli_stmt_execute($stmt);
+            $ok = mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Atleta atualizado com sucesso.");
+            if ($ok) {
+                setFlash("success", "Atleta atualizado com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível atualizar o atleta. Verifica os dados introduzidos.");
+            }
         } else {
             $sql = "INSERT INTO athletes (name, birth_date, gender, place_of_birth, phone_number, email, photo, club_id, category_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
             $stmt = mysqli_prepare($conn, $sql);
             mysqli_stmt_bind_param($stmt, "sssssssii", $nome, $data_nascimento, $genero, $local_nascimento,
                 $telefone, $email, $foto, $club_id, $category_id_param);
-            mysqli_stmt_execute($stmt);
+            $ok = mysqli_stmt_execute($stmt);
 
-            setFlash("success", "Atleta criado com sucesso.");
+            if ($ok) {
+                setFlash("success", "Atleta criado com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível criar o atleta. Verifica os dados introduzidos.");
+            }
         }
 
         header("Location: atletas.php");

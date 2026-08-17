@@ -4,6 +4,8 @@
 
 session_start();
 
+mysqli_report(MYSQLI_REPORT_OFF);
+
 // Nome do site (para aparecer no título das páginas)
 define("APP_NAME", "AGSV - Sistema de Gestão de Competições de Ginástica");
 

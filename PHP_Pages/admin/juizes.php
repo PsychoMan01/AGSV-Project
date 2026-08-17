@@ -98,14 +98,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
                 $stmt = mysqli_prepare($conn, $sql);
                 mysqli_stmt_bind_param($stmt, "sssi", $nome, $username, $email, $user_id);
             }
-            mysqli_stmt_execute($stmt);
+            $ok = mysqli_stmt_execute($stmt);
 
             $sql_papel = "UPDATE judges SET papel = ? WHERE user_id = ?";
             $stmt_papel = mysqli_prepare($conn, $sql_papel);
             mysqli_stmt_bind_param($stmt_papel, "si", $papel, $user_id);
-            mysqli_stmt_execute($stmt_papel);
+            $ok = mysqli_stmt_execute($stmt_papel) && $ok;
 
-            setFlash("success", "Juiz atualizado com sucesso.");
+            if ($ok) {
+                setFlash("success", "Juiz atualizado com sucesso.");
+            } else {
+                setFlash("error", "Não foi possível atualizar o juiz. O nome de utilizador ou email já podem estar em uso.");
+            }
         } else {
             // Criar um novo juiz: primeiro o utilizador, depois o registo em judges
             $hash = password_hash($password, PASSWORD_DEFAULT);

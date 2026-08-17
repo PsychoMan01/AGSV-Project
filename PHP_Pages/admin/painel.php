@@ -52,7 +52,10 @@ require __DIR__ . "/../../includes/header.php";
     <ul>
         <li><a href="competicoes.php">Gerir competições</a></li>
         <li><a href="juizes.php">Gerir juízes</a></li>
+        <li><a href="escaloes.php">Gerir escalões</a></li>
+        <li><a href="aparelhos.php">Gerir aparelhos</a></li>
         <li><a href="atribuicoes.php">Atribuir juízes a competições</a></li>
+        <li><a href="inscricoes.php">Inscrever atletas em competições</a></li>
         <li><a href="clubes.php">Gerir clubes</a></li>
         <li><a href="atletas.php">Gerir atletas</a></li>
     </ul>

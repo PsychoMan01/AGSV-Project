@@ -26,7 +26,7 @@ $atribuicoes = array();
 if ($juiz) {
     $judge_id = $juiz["id"];
 
-    $sql2 = "SELECT ja.id AS assignment_id, comp.name AS competition_name,
+    $sql2 = "SELECT ja.id AS assignment_id, ja.papel, comp.name AS competition_name,
                      cat.name AS category_name, eq.name AS equipment_name
               FROM judge_assignments ja
               JOIN competitions comp ON comp.id = ja.competition_id
@@ -74,6 +74,7 @@ require __DIR__ . "/../../includes/header.php";
                 <th>Competição</th>
                 <th>Escalão</th>
                 <th>Aparelho</th>
+                <th>Papel</th>
                 <th></th>
             </tr>
         </thead>
@@ -83,6 +84,7 @@ require __DIR__ . "/../../includes/header.php";
                     <td><?php echo htmlspecialchars($a["competition_name"]); ?></td>
                     <td><?php echo htmlspecialchars($a["category_name"]); ?></td>
                     <td><?php echo htmlspecialchars($a["equipment_name"]); ?></td>
+                    <td><?php echo htmlspecialchars(papelLabel($a["papel"])); ?></td>
                     <td>
                         <a class="btn btn-small" href="submeter_pontuacao.php?assignment_id=<?php echo $a['assignment_id']; ?>">
                             Pontuar atletas
