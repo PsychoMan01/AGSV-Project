@@ -1,15 +1,18 @@
 <?php
 // PHP_Pages/admin/competicoes.php
-// Página onde o administrador pode criar, editar, eliminar e publicar competições
+// Página onde o administrador pode criar, editar e eliminar competições
 
 require_once __DIR__ . "/../../config/db.php";
 require_once __DIR__ . "/../../includes/functions.php";
 
-// Só administradores podem ver esta página
-if (!isset($_SESSION["user_id"]) || $_SESSION["user_role"] != "ADMIN") {
-    header("Location: " . BASE_URL . "PHP_Pages/login.php");
-    exit;
-}
+// Área administrativa: ADMIN tem sempre acesso; um USER só entra se
+// lhe tiver sido atribuído o menu correspondente (ver Parametrizações).
+requireAdminArea($conn);
+requireTransaction($conn, "COMPETICOES_GERIR");
+
+// Todos os pedidos POST desta página alteram dados: exigimos sempre um
+// token CSRF válido antes de processar qualquer ação.
+exigirCsrf();
 
 $erros = array();
 
@@ -31,35 +34,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     exit;
 }
 
-// --- Publicar ou despublicar os resultados ---
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["acao"] == "publicar") {
-    $id = (int) $_POST["id"];
-
-    $sql = "UPDATE competitions SET results_published = NOT results_published WHERE id = ?";
-    $stmt = mysqli_prepare($conn, $sql);
-    mysqli_stmt_bind_param($stmt, "i", $id);
-
-    if (mysqli_stmt_execute($stmt)) {
-        setFlash("success", "Estado de publicação atualizado.");
-    } else {
-        setFlash("error", "Não foi possível atualizar o estado de publicação.");
-    }
-
-    header("Location: competicoes.php");
-    exit;
-}
-
-// --- Recalcular classificações (rankings) a partir das pontuações submetidas ---
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["acao"] == "calcular") {
-    $id = (int) $_POST["id"];
-
-    calcularClassificacoes($conn, $id);
-
-    setFlash("success", "Classificações recalculadas com sucesso.");
-    header("Location: competicoes.php");
-    exit;
-}
-
 // --- Criar ou atualizar uma competição ---
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["acao"] == "guardar") {
 
@@ -69,6 +43,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     $data_inicio = $_POST["start_date"];
     $data_fim = $_POST["end_date"];
     $stream_url = trim($_POST["stream_url"]);
+    $tipo = isset($_POST["tipo"]) ? $_POST["tipo"] : "REGIONAL";
 
     // A checkbox só vem no $_POST se estiver marcada
     // (a coluna "status" é um ENUM('A','I'), por isso guardamos a letra e não um inteiro)
@@ -77,8 +52,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     if ($nome == "") {
         $erros[] = "O nome da competição é obrigatório.";
     }
+    if (!in_array($tipo, array("INTERNA", "REGIONAL"), true)) {
+        $erros[] = "O tipo de competição tem de ser Interna ou Regional.";
+    }
     if ($data_inicio == "" || $data_fim == "") {
         $erros[] = "As datas de início e fim são obrigatórias.";
+    } elseif (!validarData($data_inicio) || !validarData($data_fim)) {
+        $erros[] = "As datas têm de ser datas válidas.";
+    } elseif ($data_fim < $data_inicio) {
+        $erros[] = "A data de fim não pode ser anterior à data de início.";
     }
 
     if (count($erros) == 0) {
@@ -86,10 +68,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
         if ($id > 0) {
             // Atualizar uma competição existente
             $sql = "UPDATE competitions
-                    SET name = ?, location = ?, start_date = ?, end_date = ?, stream_url = ?, status = ?
+                    SET name = ?, location = ?, start_date = ?, end_date = ?, stream_url = ?, status = ?, tipo = ?
                     WHERE id = ?";
             $stmt = mysqli_prepare($conn, $sql);
-            mysqli_stmt_bind_param($stmt, "ssssssi", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa, $id);
+            mysqli_stmt_bind_param($stmt, "sssssssi", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa, $tipo, $id);
             $ok = mysqli_stmt_execute($stmt);
 
             if ($ok) {
@@ -99,10 +81,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
             }
         } else {
             // Criar uma nova competição
-            $sql = "INSERT INTO competitions (name, location, start_date, end_date, stream_url, status, results_published)
-                    VALUES (?, ?, ?, ?, ?, ?, 0)";
+            $sql = "INSERT INTO competitions (name, location, start_date, end_date, stream_url, status, tipo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)";
             $stmt = mysqli_prepare($conn, $sql);
-            mysqli_stmt_bind_param($stmt, "ssssss", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa);
+            mysqli_stmt_bind_param($stmt, "sssssss", $nome, $local, $data_inicio, $data_fim, $stream_url, $ativa, $tipo);
             $ok = mysqli_stmt_execute($stmt);
 
             if ($ok) {
@@ -135,33 +117,48 @@ if (isset($_GET["action"]) && $_GET["action"] == "editar" && isset($_GET["id"]))
 $resultado_lista = mysqli_query($conn, "SELECT * FROM competitions ORDER BY start_date DESC");
 
 $pageTitle = "Gerir Competições - " . APP_NAME;
+$pagina_atual = "admin_competicoes";
 require __DIR__ . "/../../includes/header.php";
 ?>
 
 <section class="page-intro">
-    <a href="painel.php">&larr; Voltar ao painel</a>
+    <a class="back-link" href="painel.php"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar ao painel</a>
     <h1>Gerir Competições</h1>
+    <p>Cria e edita competições e, a partir de cada uma, gere os escalões, os juízes, as inscrições e as notas.</p>
 </section>
 
-<?php foreach ($erros as $erro): ?>
-    <div class="alert alert-error"><?php echo htmlspecialchars($erro); ?></div>
-<?php endforeach; ?>
+<?php mostrarErros($erros); ?>
 <?php mostrarFlash(); ?>
 
 <section class="form-card">
     <h2><?php echo $competicao_a_editar ? "Editar competição" : "Nova competição"; ?></h2>
 
     <form method="post" action="competicoes.php">
+        <?php echo csrfField(); ?>
         <input type="hidden" name="acao" value="guardar">
         <input type="hidden" name="id" value="<?php echo $competicao_a_editar ? $competicao_a_editar['id'] : 0; ?>">
 
-        <label for="name">Nome</label>
-        <input type="text" id="name" name="name" required
-               value="<?php echo $competicao_a_editar ? htmlspecialchars($competicao_a_editar['name']) : ''; ?>">
+        <div class="form-row">
+            <div>
+                <label for="name">Nome</label>
+                <input type="text" id="name" name="name" required
+                       value="<?php echo $competicao_a_editar ? htmlspecialchars($competicao_a_editar['name']) : ''; ?>">
+            </div>
+            <div>
+                <label for="location">Local <span class="label-optional">(opcional)</span></label>
+                <input type="text" id="location" name="location"
+                       value="<?php echo $competicao_a_editar ? htmlspecialchars($competicao_a_editar['location'] ?? "") : ''; ?>">
+            </div>
+        </div>
 
-        <label for="location">Local</label>
-        <input type="text" id="location" name="location"
-               value="<?php echo $competicao_a_editar ? htmlspecialchars($competicao_a_editar['location']) : ''; ?>">
+        <?php
+        $tipo_atual = $competicao_a_editar ? $competicao_a_editar["tipo"] : "REGIONAL";
+        ?>
+        <label for="tipo">Tipo de competição</label>
+        <select id="tipo" name="tipo" required>
+            <option value="INTERNA" <?php echo $tipo_atual == "INTERNA" ? "selected" : ""; ?>>Interna (dentro do próprio clube)</option>
+            <option value="REGIONAL" <?php echo $tipo_atual == "REGIONAL" ? "selected" : ""; ?>>Regional (entre clubes)</option>
+        </select>
 
         <div class="form-row">
             <div>
@@ -176,9 +173,9 @@ require __DIR__ . "/../../includes/header.php";
             </div>
         </div>
 
-        <label for="stream_url">URL de transmissão (opcional)</label>
-        <input type="text" id="stream_url" name="stream_url"
-               value="<?php echo $competicao_a_editar ? htmlspecialchars($competicao_a_editar['stream_url']) : ''; ?>">
+        <label for="stream_url">URL de transmissão <span class="label-optional">(opcional)</span></label>
+        <input type="text" id="stream_url" name="stream_url" placeholder="https://" inputmode="url"
+               value="<?php echo $competicao_a_editar ? htmlspecialchars($competicao_a_editar['stream_url'] ?? "") : ''; ?>">
 
         <label class="checkbox-label">
             <?php
@@ -191,78 +188,92 @@ require __DIR__ . "/../../includes/header.php";
             Competição ativa
         </label>
 
-        <button type="submit" class="btn btn-primary">
-            <?php echo $competicao_a_editar ? "Guardar alterações" : "Criar competição"; ?>
-        </button>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">
+                <?php echo $competicao_a_editar ? "Guardar alterações" : "Criar competição"; ?>
+            </button>
 
-        <?php if ($competicao_a_editar): ?>
-            <a class="btn" href="competicoes.php">Cancelar</a>
-        <?php endif; ?>
+            <?php if ($competicao_a_editar): ?>
+                <a class="btn" href="competicoes.php">Cancelar</a>
+            <?php endif; ?>
+        </div>
     </form>
 </section>
 
 <section class="competitions-list">
-    <h2>Competições existentes</h2>
+    <?php
+    // Permissões calculadas uma vez (e não uma vez por linha da tabela)
+    $pode_escaloes = temPermissaoTransacao($conn, "COMPETICAO_ESCALOES_GERIR");
+    $pode_atribuicoes = temPermissaoTransacao($conn, "ATRIBUICOES_GERIR");
+    $pode_inscricoes = temPermissaoTransacao($conn, "INSCRICOES_GERIR");
+    $pode_notas = temPermissaoTransacao($conn, "NOTAS_GERIR");
+    ?>
+    <h2>Competições existentes<span class="count-pill"><?php echo mysqli_num_rows($resultado_lista); ?></span></h2>
 
     <?php if (mysqli_num_rows($resultado_lista) == 0): ?>
 
-        <p>Ainda não existem competições registadas.</p>
+        <div class="empty-state">
+            <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
+            <p>Ainda não existem competições registadas.</p>
+        </div>
 
     <?php else: ?>
 
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Nome</th>
-                    <th>Local</th>
-                    <th>Início</th>
-                    <th>Fim</th>
-                    <th>Estado</th>
-                    <th>Resultados</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php while ($comp = mysqli_fetch_assoc($resultado_lista)): ?>
+        <div class="table-scroll">
+            <table class="data-table data-table--stack">
+                <thead>
                     <tr>
-                        <td><?php echo htmlspecialchars($comp["name"]); ?></td>
-                        <td><?php echo htmlspecialchars($comp["location"]); ?></td>
-                        <td><?php echo formatarData($comp["start_date"]); ?></td>
-                        <td><?php echo formatarData($comp["end_date"]); ?></td>
-                        <td><?php echo $comp["status"] == "A" ? "Ativa" : "Inativa"; ?></td>
-                        <td><?php echo $comp["results_published"] == 1 ? "Publicados" : "Por publicar"; ?></td>
-                        <td class="actions-cell">
-                            <a class="btn btn-small" href="competicoes.php?action=editar&id=<?php echo $comp['id']; ?>">Editar</a>
-
-                            <a class="btn btn-small" href="atribuicoes.php?competition_id=<?php echo $comp['id']; ?>">Juízes</a>
-
-                            <a class="btn btn-small" href="inscricoes.php?competition_id=<?php echo $comp['id']; ?>">Atletas</a>
-
-                            <form method="post" action="competicoes.php" class="inline-form">
-                                <input type="hidden" name="acao" value="calcular">
-                                <input type="hidden" name="id" value="<?php echo $comp['id']; ?>">
-                                <button type="submit" class="btn btn-small">Calcular Classificações</button>
-                            </form>
-
-                            <form method="post" action="competicoes.php" class="inline-form">
-                                <input type="hidden" name="acao" value="publicar">
-                                <input type="hidden" name="id" value="<?php echo $comp['id']; ?>">
-                                <button type="submit" class="btn btn-small">
-                                    <?php echo $comp["results_published"] == 1 ? "Despublicar" : "Publicar"; ?>
-                                </button>
-                            </form>
-
-                            <form method="post" action="competicoes.php" class="inline-form"
-                                  onsubmit="return confirm('Eliminar esta competição? Esta ação não pode ser desfeita.');">
-                                <input type="hidden" name="acao" value="eliminar">
-                                <input type="hidden" name="id" value="<?php echo $comp['id']; ?>">
-                                <button type="submit" class="btn btn-small btn-danger">Eliminar</button>
-                            </form>
-                        </td>
+                        <th scope="col">Nome</th>
+                        <th scope="col">Local</th>
+                        <th scope="col">Tipo</th>
+                        <th scope="col">Início</th>
+                        <th scope="col">Fim</th>
+                        <th scope="col">Estado</th>
+                        <th scope="col"><span class="sr-only">Ações</span></th>
                     </tr>
-                <?php endwhile; ?>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <?php while ($comp = mysqli_fetch_assoc($resultado_lista)): ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($comp["name"]); ?></td>
+                            <td class="cell-muted" data-label="Local"><?php echo htmlspecialchars($comp["location"] ?? ""); ?></td>
+                            <td data-label="Tipo"><?php echo $comp["tipo"] == "INTERNA" ? "Interna" : "Regional"; ?></td>
+                            <td class="num" data-label="Início"><?php echo formatarData($comp["start_date"]); ?></td>
+                            <td class="num" data-label="Fim"><?php echo formatarData($comp["end_date"]); ?></td>
+                            <td data-label="Estado"><span class="badge <?php echo $comp["status"] == "A" ? "badge-active" : "badge-inactive"; ?>"><?php echo $comp["status"] == "A" ? "Ativa" : "Inativa"; ?></span></td>
+                            <td class="actions-cell actions-cell--wide">
+                                <div class="actions-wrap">
+                                    <a class="btn btn-small" href="competicoes.php?action=editar&id=<?php echo $comp['id']; ?>"><i class="fa-solid fa-pen" aria-hidden="true"></i> Editar</a>
+
+                                    <?php if ($pode_escaloes): ?>
+                                        <a class="btn btn-small btn-ghost" href="competicao_escaloes.php?competition_id=<?php echo $comp['id']; ?>"><i class="fa-solid fa-sitemap" aria-hidden="true"></i> Escalões</a>
+                                    <?php endif; ?>
+
+                                    <?php if ($pode_atribuicoes): ?>
+                                        <a class="btn btn-small btn-ghost" href="atribuicoes.php?competition_id=<?php echo $comp['id']; ?>"><i class="fa-solid fa-gavel" aria-hidden="true"></i> Juízes</a>
+                                    <?php endif; ?>
+
+                                    <?php if ($pode_inscricoes): ?>
+                                        <a class="btn btn-small btn-ghost" href="inscricoes.php?competition_id=<?php echo $comp['id']; ?>"><i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Atletas</a>
+                                    <?php endif; ?>
+
+                                    <?php if ($pode_notas): ?>
+                                        <a class="btn btn-small btn-ghost" href="notas.php?competition_id=<?php echo $comp['id']; ?>"><i class="fa-solid fa-star-half-stroke" aria-hidden="true"></i> Notas</a>
+                                    <?php endif; ?>
+
+                                    <form method="post" action="competicoes.php" class="inline-form" data-confirm="Eliminar esta competição? Esta ação não pode ser desfeita.">
+                                        <?php echo csrfField(); ?>
+                                        <input type="hidden" name="acao" value="eliminar">
+                                        <input type="hidden" name="id" value="<?php echo $comp['id']; ?>">
+                                        <button type="submit" class="btn btn-small btn-danger-soft"><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Eliminar</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endwhile; ?>
+                </tbody>
+            </table>
+        </div>
 
     <?php endif; ?>
 </section>

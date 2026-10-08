@@ -1,16 +1,21 @@
 <?php
 // PHP_Pages/admin/atletas.php
 // Página onde o administrador pode criar, editar e remover atletas.
-// Cada atleta pertence a um clube e, opcionalmente, a uma categoria/escalão.
+// Cada atleta pertence a um clube; o escalão (categoria) já não é escolhido
+// manualmente aqui — é calculado automaticamente a partir da idade do
+// atleta, usando os intervalos min_age/max_age definidos em "Gerir escalões".
 
 require_once __DIR__ . "/../../config/db.php";
 require_once __DIR__ . "/../../includes/functions.php";
 
-// Só administradores podem ver esta página
-if (!isset($_SESSION["user_id"]) || $_SESSION["user_role"] != "ADMIN") {
-    header("Location: " . BASE_URL . "PHP_Pages/login.php");
-    exit;
-}
+// Área administrativa: ADMIN tem sempre acesso; um USER só entra se
+// lhe tiver sido atribuído o menu correspondente (ver Parametrizações).
+requireAdminArea($conn);
+requireTransaction($conn, "ATLETAS_GERIR");
+
+// Todos os pedidos POST desta página alteram dados: exigimos sempre um
+// token CSRF válido antes de processar qualquer ação.
+exigirCsrf();
 
 $erros = array();
 
@@ -47,25 +52,41 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
     $email = trim($_POST["email"]);
     $foto = trim($_POST["photo"]);
     $club_id = (int) $_POST["club_id"];
-    $category_id = (int) $_POST["category_id"]; // 0 = sem categoria
+    // O escalão já não vem do formulário — é sempre calculado a partir da
+    // data de nascimento, mais abaixo, depois de validarmos essa data.
 
     if ($nome == "") {
         $erros[] = "O nome é obrigatório.";
     }
     if ($data_nascimento == "") {
         $erros[] = "A data de nascimento é obrigatória.";
+    } elseif (!validarDataNascimento($data_nascimento)) {
+        $erros[] = "A data de nascimento é inválida (verifica se não está no futuro nem é uma data impossível).";
     }
     if ($local_nascimento == "") {
         $erros[] = "A naturalidade é obrigatória.";
     }
     if ($telefone == "") {
         $erros[] = "O telefone é obrigatório.";
+    } elseif (!validarTelefone($telefone)) {
+        $erros[] = "O telefone tem um formato inválido.";
     }
     if ($email == "") {
         $erros[] = "O email é obrigatório.";
+    } elseif (!validarEmail($email)) {
+        $erros[] = "O email tem um formato inválido.";
     }
     if ($club_id == 0) {
         $erros[] = "Escolhe o clube do atleta.";
+    } else {
+        // Confirmar que o clube escolhido realmente existe (evita um ID manipulado no pedido)
+        $sql_clube = "SELECT id FROM clubs WHERE id = ? LIMIT 1";
+        $stmt_clube = mysqli_prepare($conn, $sql_clube);
+        mysqli_stmt_bind_param($stmt_clube, "i", $club_id);
+        mysqli_stmt_execute($stmt_clube);
+        if (!mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_clube))) {
+            $erros[] = "O clube escolhido não existe.";
+        }
     }
     if (!array_key_exists($genero, generos())) {
         $erros[] = "Escolhe um género válido.";
@@ -73,8 +94,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
 
     if (count($erros) == 0) {
 
-        // category_id pode ficar por preencher (NULL na base de dados)
-        $category_id_param = $category_id > 0 ? $category_id : null;
+        // O escalão é sempre recalculado a partir da idade atual do atleta
+        // (mesmo ao editar, para o caso de a data de nascimento ter sido
+        // corrigida). Fica NULL se a idade não couber em nenhum escalão
+        // configurado.
+        $category_id_param = calcularEscalaoPorIdade($conn, $data_nascimento);
+
+        if ($category_id_param === null) {
+            $aviso_escalao = " Aviso: a idade do atleta (" . calcularIdade($data_nascimento) . " anos) não corresponde a nenhum escalão configurado — o atleta ficou sem escalão atribuído. Verifica os intervalos de idade em 'Gerir escalões'.";
+        } else {
+            $aviso_escalao = "";
+        }
 
         if ($id > 0) {
             $sql = "UPDATE athletes
@@ -87,7 +117,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
             $ok = mysqli_stmt_execute($stmt);
 
             if ($ok) {
-                setFlash("success", "Atleta atualizado com sucesso.");
+                setFlash("success", "Atleta atualizado com sucesso." . $aviso_escalao);
             } else {
                 setFlash("error", "Não foi possível atualizar o atleta. Verifica os dados introduzidos.");
             }
@@ -100,7 +130,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["acao"]) && $_POST["aca
             $ok = mysqli_stmt_execute($stmt);
 
             if ($ok) {
-                setFlash("success", "Atleta criado com sucesso.");
+                setFlash("success", "Atleta criado com sucesso." . $aviso_escalao);
             } else {
                 setFlash("error", "Não foi possível criar o atleta. Verifica os dados introduzidos.");
             }
@@ -117,7 +147,10 @@ $atleta_a_editar = null;
 if (isset($_GET["action"]) && $_GET["action"] == "editar" && isset($_GET["id"])) {
     $id_editar = (int) $_GET["id"];
 
-    $sql = "SELECT * FROM athletes WHERE id = ? LIMIT 1";
+    $sql = "SELECT a.*, cat.name AS category_name
+            FROM athletes a
+            LEFT JOIN categories cat ON cat.id = a.category_id
+            WHERE a.id = ? LIMIT 1";
     $stmt = mysqli_prepare($conn, $sql);
     mysqli_stmt_bind_param($stmt, "i", $id_editar);
     mysqli_stmt_execute($stmt);
@@ -125,9 +158,8 @@ if (isset($_GET["action"]) && $_GET["action"] == "editar" && isset($_GET["id"]))
     $atleta_a_editar = mysqli_fetch_assoc($resultado);
 }
 
-// Listas para preencher os <select> do formulário
+// Lista para preencher o <select> de clubes do formulário
 $clubes = mysqli_query($conn, "SELECT id, name FROM clubs ORDER BY name");
-$categorias = mysqli_query($conn, "SELECT id, name FROM categories ORDER BY name");
 
 // --- Lista de todos os atletas ---
 $resultado_lista = mysqli_query($conn, "SELECT a.*, c.name AS club_name, cat.name AS category_name
@@ -137,27 +169,31 @@ $resultado_lista = mysqli_query($conn, "SELECT a.*, c.name AS club_name, cat.nam
                                          ORDER BY a.name");
 
 $pageTitle = "Gerir Atletas - " . APP_NAME;
+$pagina_atual = "admin_atletas";
 require __DIR__ . "/../../includes/header.php";
 ?>
 
 <section class="page-intro">
-    <a href="painel.php">&larr; Voltar ao painel</a>
+    <a class="back-link" href="painel.php"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar ao painel</a>
     <h1>Gerir Atletas</h1>
+    <p>Regista os atletas e o respetivo clube. O escalão é calculado automaticamente pela idade.</p>
 </section>
 
-<?php foreach ($erros as $erro): ?>
-    <div class="alert alert-error"><?php echo htmlspecialchars($erro); ?></div>
-<?php endforeach; ?>
+<?php mostrarErros($erros); ?>
 <?php mostrarFlash(); ?>
 
 <section class="form-card">
     <h2><?php echo $atleta_a_editar ? "Editar atleta" : "Novo atleta"; ?></h2>
 
     <?php if (mysqli_num_rows($clubes) == 0): ?>
-        <p>É preciso existir pelo menos um clube antes de registares atletas. <a href="clubes.php">Cria um clube primeiro.</a></p>
+        <div class="empty-state">
+            <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
+            <p>É preciso existir pelo menos um clube antes de registares atletas. <a href="clubes.php">Cria um clube primeiro.</a></p>
+        </div>
     <?php else: ?>
 
         <form method="post" action="atletas.php">
+            <?php echo csrfField(); ?>
             <input type="hidden" name="acao" value="guardar">
             <input type="hidden" name="id" value="<?php echo $atleta_a_editar ? $atleta_a_editar['id'] : 0; ?>">
 
@@ -192,7 +228,7 @@ require __DIR__ . "/../../includes/header.php";
             <div class="form-row">
                 <div>
                     <label for="phone_number">Telefone</label>
-                    <input type="text" id="phone_number" name="phone_number" required
+                    <input type="tel" id="phone_number" name="phone_number" required autocomplete="off"
                            value="<?php echo $atleta_a_editar ? htmlspecialchars($atleta_a_editar['phone_number']) : ''; ?>">
                 </div>
                 <div>
@@ -202,92 +238,93 @@ require __DIR__ . "/../../includes/header.php";
                 </div>
             </div>
 
-            <label for="photo">Foto (URL, opcional)</label>
-            <input type="text" id="photo" name="photo"
-                   value="<?php echo $atleta_a_editar ? htmlspecialchars($atleta_a_editar['photo']) : ''; ?>">
+            <label for="photo">Foto (URL) <span class="label-optional">(opcional)</span></label>
+            <input type="text" id="photo" name="photo" placeholder="https://" inputmode="url"
+                   value="<?php echo $atleta_a_editar ? htmlspecialchars($atleta_a_editar['photo'] ?? "") : ''; ?>">
 
-            <div class="form-row">
-                <div>
-                    <label for="club_id">Clube</label>
-                    <select id="club_id" name="club_id" required>
-                        <option value="">-- Escolhe um clube --</option>
-                        <?php while ($clube = mysqli_fetch_assoc($clubes)): ?>
-                            <option value="<?php echo $clube['id']; ?>"
-                                <?php echo ($atleta_a_editar && $atleta_a_editar["club_id"] == $clube["id"]) ? "selected" : ""; ?>>
-                                <?php echo htmlspecialchars($clube["name"]); ?>
-                            </option>
-                        <?php endwhile; ?>
-                    </select>
-                </div>
-                <div>
-                    <label for="category_id">Escalão (opcional)</label>
-                    <select id="category_id" name="category_id">
-                        <option value="0">-- Sem escalão --</option>
-                        <?php mysqli_data_seek($categorias, 0); ?>
-                        <?php while ($cat = mysqli_fetch_assoc($categorias)): ?>
-                            <option value="<?php echo $cat['id']; ?>"
-                                <?php echo ($atleta_a_editar && $atleta_a_editar["category_id"] == $cat["id"]) ? "selected" : ""; ?>>
-                                <?php echo htmlspecialchars($cat["name"]); ?>
-                            </option>
-                        <?php endwhile; ?>
-                    </select>
-                </div>
+            <label for="club_id">Clube</label>
+            <select id="club_id" name="club_id" required>
+                <option value="">-- Escolhe um clube --</option>
+                <?php while ($clube = mysqli_fetch_assoc($clubes)): ?>
+                    <option value="<?php echo $clube['id']; ?>"
+                        <?php echo ($atleta_a_editar && $atleta_a_editar["club_id"] == $clube["id"]) ? "selected" : ""; ?>>
+                        <?php echo htmlspecialchars($clube["name"]); ?>
+                    </option>
+                <?php endwhile; ?>
+            </select>
+
+            <p class="hint">
+                O escalão já não se escolhe aqui: é calculado automaticamente a partir da
+                data de nascimento, usando os intervalos de idade definidos em
+                <a href="escaloes.php">Gerir escalões</a>.
+                <?php if ($atleta_a_editar): ?>
+                    <br>Escalão atual: <strong><?php echo htmlspecialchars($atleta_a_editar["category_name"] ?? "nenhum (idade fora de todos os escalões configurados)"); ?></strong>
+                <?php endif; ?>
+            </p>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <?php echo $atleta_a_editar ? "Guardar alterações" : "Criar atleta"; ?>
+                </button>
+
+                <?php if ($atleta_a_editar): ?>
+                    <a class="btn" href="atletas.php">Cancelar</a>
+                <?php endif; ?>
             </div>
-
-            <button type="submit" class="btn btn-primary">
-                <?php echo $atleta_a_editar ? "Guardar alterações" : "Criar atleta"; ?>
-            </button>
-
-            <?php if ($atleta_a_editar): ?>
-                <a class="btn" href="atletas.php">Cancelar</a>
-            <?php endif; ?>
         </form>
 
     <?php endif; ?>
 </section>
 
 <section class="competitions-list">
-    <h2>Atletas existentes</h2>
+    <h2>Atletas existentes<span class="count-pill"><?php echo mysqli_num_rows($resultado_lista); ?></span></h2>
 
     <?php if (mysqli_num_rows($resultado_lista) == 0): ?>
 
-        <p>Ainda não existem atletas registados.</p>
+        <div class="empty-state">
+            <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
+            <p>Ainda não existem atletas registados.</p>
+        </div>
 
     <?php else: ?>
 
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Nome</th>
-                    <th>Clube</th>
-                    <th>Escalão</th>
-                    <th>Género</th>
-                    <th>Nascimento</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php while ($atleta = mysqli_fetch_assoc($resultado_lista)): ?>
+        <div class="table-scroll">
+            <table class="data-table data-table--stack">
+                <thead>
                     <tr>
-                        <td><?php echo htmlspecialchars($atleta["name"]); ?></td>
-                        <td><?php echo htmlspecialchars($atleta["club_name"] ?? "-"); ?></td>
-                        <td><?php echo htmlspecialchars($atleta["category_name"] ?? "-"); ?></td>
-                        <td><?php echo htmlspecialchars(generoLabel($atleta["gender"])); ?></td>
-                        <td><?php echo formatarData($atleta["birth_date"]); ?></td>
-                        <td class="actions-cell">
-                            <a class="btn btn-small" href="atletas.php?action=editar&id=<?php echo $atleta['id']; ?>">Editar</a>
-
-                            <form method="post" action="atletas.php" class="inline-form"
-                                  onsubmit="return confirm('Remover este atleta? Esta ação não pode ser desfeita.');">
-                                <input type="hidden" name="acao" value="eliminar">
-                                <input type="hidden" name="id" value="<?php echo $atleta['id']; ?>">
-                                <button type="submit" class="btn btn-small btn-danger">Remover</button>
-                            </form>
-                        </td>
+                        <th scope="col">Nome</th>
+                        <th scope="col">Clube</th>
+                        <th scope="col">Escalão</th>
+                        <th scope="col">Género</th>
+                        <th scope="col">Nascimento</th>
+                        <th scope="col"><span class="sr-only">Ações</span></th>
                     </tr>
-                <?php endwhile; ?>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <?php while ($atleta = mysqli_fetch_assoc($resultado_lista)): ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($atleta["name"]); ?></td>
+                            <td class="cell-muted" data-label="Clube"><?php echo htmlspecialchars($atleta["club_name"] ?? "-"); ?></td>
+                            <td data-label="Escalão"><?php echo htmlspecialchars($atleta["category_name"] ?? "-"); ?></td>
+                            <td data-label="Género"><?php echo htmlspecialchars(generoLabel($atleta["gender"])); ?></td>
+                            <td class="num" data-label="Nascimento"><?php echo formatarData($atleta["birth_date"]); ?></td>
+                            <td class="actions-cell">
+                                <div class="actions-wrap">
+                                    <a class="btn btn-small" href="atletas.php?action=editar&id=<?php echo $atleta['id']; ?>"><i class="fa-solid fa-pen" aria-hidden="true"></i> Editar</a>
+
+                                    <form method="post" action="atletas.php" class="inline-form" data-confirm="Remover este atleta? Esta ação não pode ser desfeita.">
+                                        <?php echo csrfField(); ?>
+                                        <input type="hidden" name="acao" value="eliminar">
+                                        <input type="hidden" name="id" value="<?php echo $atleta['id']; ?>">
+                                        <button type="submit" class="btn btn-small btn-danger-soft"><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Remover</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endwhile; ?>
+                </tbody>
+            </table>
+        </div>
 
     <?php endif; ?>
 </section>

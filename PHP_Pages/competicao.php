@@ -22,93 +22,67 @@ $competicao = mysqli_fetch_assoc($resultado);
 // Se não encontrar nenhuma competição com esse id, mostrar mensagem e parar
 if (!$competicao) {
     $pageTitle = "Competição não encontrada";
+    $pagina_atual = "competicoes_publico";
     require __DIR__ . "/../includes/header.php";
-    echo "<p>Competição não encontrada.</p>";
-    echo "<p><a href='index.php'>Voltar</a></p>";
+    echo "<div class='empty-state'><i class='fa-regular fa-calendar-xmark' aria-hidden='true'></i>"
+       . "<h3>Competição não encontrada</h3><p>A competição pedida não existe ou foi removida.</p>"
+       . "<a class='btn' href='competicoes.php'>Ver todas as competições</a></div>";
     require __DIR__ . "/../includes/footer.php";
     exit;
 }
 
 $pageTitle = $competicao["name"] . " - " . APP_NAME;
+$pagina_atual = "competicoes_publico";
 require __DIR__ . "/../includes/header.php";
 ?>
 
 <section class="page-intro">
-    <a href="index.php">&larr; Voltar às competições</a>
+    <a class="back-link" href="competicoes.php"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar às competições</a>
     <h1><?php echo htmlspecialchars($competicao["name"]); ?></h1>
-    <p>
-        <strong>Local:</strong> <?php echo htmlspecialchars($competicao["location"]); ?><br>
-        <strong>Datas:</strong>
-        <?php echo formatarData($competicao["start_date"]); ?> a
-        <?php echo formatarData($competicao["end_date"]); ?>
-    </p>
+    <ul class="meta-list">
+        <?php if ($competicao["location"]): ?>
+            <li><i class="fa-solid fa-location-dot" aria-hidden="true"></i> <?php echo htmlspecialchars($competicao["location"] ?? ""); ?></li>
+        <?php endif; ?>
+        <li><i class="fa-regular fa-calendar" aria-hidden="true"></i> <?php echo formatarData($competicao["start_date"]); ?> a <?php echo formatarData($competicao["end_date"]); ?></li>
+        <li><i class="fa-solid fa-tag" aria-hidden="true"></i> <?php echo $competicao["tipo"] == "INTERNA" ? "Interna" : "Regional"; ?></li>
+    </ul>
 </section>
 
 <section class="results">
-    <h2>Resultados</h2>
+    <div class="section-head">
+        <div>
+            <h2>Classificação geral</h2>
+            <p>Atualiza-se automaticamente à medida que os juízes vão submetendo notas.</p>
+        </div>
+        <span class="live-banner live-banner--live"><span></span> Em direto</span>
+    </div>
 
-    <?php if ($competicao["results_published"] != 1): ?>
+    <?php
+    $classificacao_geral = obterClassificacaoGeral($conn, $id);
+    $aparelhos_geral = $classificacao_geral["aparelhos"];
+    $linhas_geral = $classificacao_geral["linhas"];
+    ?>
 
-        <p>Os resultados desta competição ainda não foram publicados.</p>
-
-    <?php else: ?>
-
-        <?php
-        // Ir buscar a classificação (rankings) desta competição
-        $sql_rankings = "SELECT r.position, r.final_score, a.name AS athlete_name,
-                                 c.name AS category_name, e.name AS equipment_name
-                          FROM rankings r
-                          JOIN athletes a ON a.id = r.athlete_id
-                          JOIN categories c ON c.id = r.category_id
-                          JOIN equipments e ON e.id = r.equipment_id
-                          WHERE r.competition_id = ?
-                          ORDER BY e.name, c.name, r.position ASC";
-
-        $stmt2 = mysqli_prepare($conn, $sql_rankings);
-        mysqli_stmt_bind_param($stmt2, "i", $id);
-        mysqli_stmt_execute($stmt2);
-        $resultado_rankings = mysqli_stmt_get_result($stmt2);
-
-        if (mysqli_num_rows($resultado_rankings) == 0):
-        ?>
+    <?php if (count($linhas_geral) == 0): ?>
+        <div class="empty-state">
+            <i class="fa-solid fa-ranking-star" aria-hidden="true"></i>
+            <h3>Ainda sem classificações</h3>
             <p>Ainda não há classificações registadas para esta competição.</p>
-        <?php else: ?>
-
-            <?php
-            // Agrupar os resultados por "aparelho - escalão" para ficar organizado
-            $grupos = array();
-            while ($linha = mysqli_fetch_assoc($resultado_rankings)) {
-                $chave = $linha["equipment_name"] . " — " . $linha["category_name"];
-                if (!isset($grupos[$chave])) {
-                    $grupos[$chave] = array();
-                }
-                $grupos[$chave][] = $linha;
-            }
-            ?>
-
-            <?php foreach ($grupos as $nome_grupo => $linhas): ?>
-                <h3><?php echo htmlspecialchars($nome_grupo); ?></h3>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Posição</th>
-                            <th>Atleta</th>
-                            <th>Pontuação Final</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($linhas as $linha): ?>
-                            <tr>
-                                <td><?php echo $linha["position"]; ?>º</td>
-                                <td><?php echo htmlspecialchars($linha["athlete_name"]); ?></td>
-                                <td><?php echo number_format($linha["final_score"], 3, ",", "."); ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endforeach; ?>
-
-        <?php endif; ?>
+        </div>
+    <?php else: ?>
+        <?php
+        // Agrupar as linhas por escalão: cada grupo mostra o nome real do
+        // escalão (ex: "Nível 1", "Iniciados", ...). As linhas já vêm
+        // ordenadas por escalão (ver obterClassificacaoGeral()).
+        $grupos_geral = array();
+        foreach ($linhas_geral as $linha) {
+            $grupos_geral[$linha["category_id"]][] = $linha;
+        }
+        ?>
+        <?php foreach ($grupos_geral as $linhas_do_nivel): ?>
+            <h3 class="nivel-heading"><?php echo htmlspecialchars($linhas_do_nivel[0]["category_name"]); ?></h3>
+            <?php require __DIR__ . "/../includes/tabela_classificacao.php"; ?>
+        <?php endforeach; ?>
     <?php endif; ?>
 </section>
 

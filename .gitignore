@@ -1,1 +1,3 @@
 config/database.sql
+# credenciais locais da base de dados (usar config/db.example.php)
+config/db.php

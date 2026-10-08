@@ -5,11 +5,8 @@
 require_once __DIR__ . "/../../config/db.php";
 require_once __DIR__ . "/../../includes/functions.php";
 
-// Só juízes podem ver esta página
-if (!isset($_SESSION["user_id"]) || $_SESSION["user_role"] != "JUDGE") {
-    header("Location: " . BASE_URL . "PHP_Pages/login.php");
-    exit;
-}
+// Só juízes com conta ativa podem ver esta página
+requireActiveJudge($conn);
 
 $user_id = $_SESSION["user_id"];
 
@@ -26,12 +23,10 @@ $atribuicoes = array();
 if ($juiz) {
     $judge_id = $juiz["id"];
 
-    $sql2 = "SELECT ja.id AS assignment_id, ja.papel, comp.name AS competition_name,
-                     cat.name AS category_name, eq.name AS equipment_name
+    $sql2 = "SELECT ja.id AS assignment_id, ja.papel, ja.numero_juiz,
+                     comp.name AS competition_name
               FROM judge_assignments ja
               JOIN competitions comp ON comp.id = ja.competition_id
-              JOIN categories cat ON cat.id = ja.category_id
-              JOIN equipments eq ON eq.id = ja.equipment_id
               WHERE ja.judge_id = ?
               ORDER BY comp.start_date DESC";
 
@@ -46,55 +41,62 @@ if ($juiz) {
 }
 
 $pageTitle = "Painel do Juiz - " . APP_NAME;
+$pagina_atual = "painel";
 require __DIR__ . "/../../includes/header.php";
 ?>
 
 <section class="page-intro">
-    <h1>Painel do Juiz</h1>
-    <p>As tuas atribuições de competições, escalões e aparelhos.</p>
+    <div class="live-banner"><span></span> Área de julgamento</div>
+    <h1>Painel do juiz</h1>
+    <p>Consulta as tuas atribuições e entra diretamente no ambiente de pontuação de cada competição.</p>
 </section>
 
 <?php mostrarFlash(); ?>
 
 <?php if (!$juiz): ?>
-
-    <div class="alert alert-error">
-        Não existe um registo de juiz associado a esta conta. Fala com o administrador.
-    </div>
-
+    <div class="alert alert-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><div class="alert-body">Não existe um registo de juiz associado a esta conta. Contacta um administrador.</div></div>
 <?php elseif (count($atribuicoes) == 0): ?>
-
-    <p>Ainda não tens atribuições de competições.</p>
-
+    <section class="card">
+        <div class="empty-state">
+            <i class="fa-regular fa-calendar" aria-hidden="true"></i>
+            <h3>Sem atribuições neste momento</h3>
+            <p>Quando fores associado a uma competição, ela aparecerá automaticamente nesta área.</p>
+        </div>
+    </section>
 <?php else: ?>
-
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>Competição</th>
-                <th>Escalão</th>
-                <th>Aparelho</th>
-                <th>Papel</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php foreach ($atribuicoes as $a): ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($a["competition_name"]); ?></td>
-                    <td><?php echo htmlspecialchars($a["category_name"]); ?></td>
-                    <td><?php echo htmlspecialchars($a["equipment_name"]); ?></td>
-                    <td><?php echo htmlspecialchars(papelLabel($a["papel"])); ?></td>
-                    <td>
-                        <a class="btn btn-small" href="submeter_pontuacao.php?assignment_id=<?php echo $a['assignment_id']; ?>">
-                            Pontuar atletas
-                        </a>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        </tbody>
-    </table>
-
+    <section class="card">
+        <div class="section-head">
+            <div>
+                <h2>As tuas competições</h2>
+                <p>Seleciona uma atribuição para começar a pontuar.</p>
+            </div>
+            <span class="badge badge-active"><?php echo count($atribuicoes); ?> atribuição<?php echo count($atribuicoes) === 1 ? '' : 'ões'; ?></span>
+        </div>
+        <div class="table-scroll">
+            <table class="data-table data-table--stack">
+                <thead>
+                    <tr>
+                        <th scope="col">Competição</th>
+                        <th scope="col">Função</th>
+                        <th scope="col">Número</th>
+                        <th scope="col"><span class="sr-only">Ação</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($atribuicoes as $a): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($a["competition_name"]); ?></td>
+                        <td data-label="Função"><?php echo htmlspecialchars(papelLabel($a["papel"])); ?></td>
+                        <td data-label="Número"><span class="badge badge-code"><?php echo htmlspecialchars(campoNumeroLabel($a["papel"], $a["numero_juiz"])); ?></span></td>
+                        <td class="actions-cell">
+                            <a class="btn btn-primary btn-small" href="submeter_pontuacao.php?assignment_id=<?php echo (int)$a['assignment_id']; ?>"><i class="fa-solid fa-pen-to-square" aria-hidden="true"></i> Pontuar atletas</a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </section>
 <?php endif; ?>
 
 <?php require __DIR__ . "/../../includes/footer.php"; ?>

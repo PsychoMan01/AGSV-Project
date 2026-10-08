@@ -7,7 +7,7 @@ require_once __DIR__ . "/../includes/functions.php";
 
 // Se já tiver sessão iniciada, não faz sentido ver o login outra vez
 if (isset($_SESSION["user_id"])) {
-    if ($_SESSION["user_role"] == "ADMIN") {
+    if ($_SESSION["user_role"] == "ADMIN" || $_SESSION["user_role"] == "USER") {
         header("Location: admin/painel.php");
     } elseif ($_SESSION["user_role"] == "JUDGE") {
         header("Location: judge/painel.php");
@@ -17,20 +17,20 @@ if (isset($_SESSION["user_id"])) {
     exit;
 }
 
-$erro = ""; // aqui vamos guardar uma mensagem de erro, se houver
+$erro = "";
 
 // Isto só corre quando o formulário é submetido (método POST)
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
-    $utilizador = trim($_POST["user_name"]);
-    $palavra_passe = $_POST["password"];
+    $utilizador = trim($_POST["user_name"] ?? "");
+    $palavra_passe = $_POST["password"] ?? "";
 
     if ($utilizador == "" || $palavra_passe == "") {
-        $erro = "Preenche o utilizador e a palavra-passe.";
+        $erro = "Preenche o utilizador/email e a palavra-passe.";
     } else {
 
         // Ir buscar o utilizador à base de dados pelo nome de utilizador ou email
-        $sql = "SELECT id, name, password, role, status FROM users
+        $sql = "SELECT id, name, password, role, funcao, status FROM users
                 WHERE user_name = ? OR user_email = ? LIMIT 1";
 
         $stmt = mysqli_prepare($conn, $sql);
@@ -47,14 +47,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } elseif (isset($user["status"]) && $user["status"] == "I") {
             $erro = "Esta conta está inativa. Fala com o administrador.";
         } else {
-            // Tudo certo! Guardar os dados na sessão e redirecionar
-            $_SESSION["user_id"]   = $user["id"];
-            $_SESSION["user_name"] = $user["name"];
-            $_SESSION["user_role"] = $user["role"];
+            // Regenerar o ID de sessão antes de autenticar.
+            session_regenerate_id(true);
+
+            $_SESSION["user_id"]     = $user["id"];
+            $_SESSION["user_name"]   = $user["name"];
+            $_SESSION["user_role"]   = $user["role"];
+            $_SESSION["user_funcao"] = $user["funcao"];
 
             setFlash("success", "Sessão iniciada com sucesso. Bem-vindo, " . $user["name"] . "!");
 
-            if ($user["role"] == "ADMIN") {
+            if ($user["role"] == "ADMIN" || $user["role"] == "USER") {
                 header("Location: admin/painel.php");
             } elseif ($user["role"] == "JUDGE") {
                 header("Location: judge/painel.php");
@@ -67,26 +70,103 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 }
 
 $pageTitle = "Entrar - " . APP_NAME;
-require __DIR__ . "/../includes/header.php";
 ?>
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<?php require __DIR__ . "/../includes/head_assets.php"; ?>
+</head>
+<body class="login-page">
 
-<section class="form-page">
-    <h1>Entrar</h1>
+<div class="login-layout">
+    <!-- Área de apresentação da AGSV -->
+    <section class="login-brand" aria-label="Associação de Ginástica de São Vicente">
+        <div class="login-brand-inner">
+            <img src="<?php echo BASE_URL; ?>CSS/images/agsv_logo.png"
+                 alt="Associação de Ginástica de São Vicente"
+                 class="brand-logo" width="640" height="521">
+            <h2>Competições, atletas e classificações num só lugar.</h2>
+            <p>Plataforma de gestão da Associação de Ginástica de São Vicente para administradores, juízes e equipa técnica.</p>
+        </div>
+        <p class="login-brand-foot">&copy; <?php echo date("Y"); ?> AGSV · Sistema de Gestão de Competições</p>
+    </section>
 
-    <?php if ($erro != ""): ?>
-        <div class="alert alert-error"><?php echo htmlspecialchars($erro); ?></div>
-    <?php endif; ?>
-    <?php mostrarFlash(); ?>
+    <!-- Área do formulário -->
+    <main class="login-panel">
+        <button type="button" class="icon-button login-theme" data-theme-toggle aria-label="Alternar tema escuro" title="Alternar tema">
+            <i class="fa-solid fa-moon theme-icon-light" aria-hidden="true"></i>
+            <i class="fa-solid fa-sun theme-icon-dark" aria-hidden="true"></i>
+        </button>
 
-    <form method="post" action="" class="form-card">
-        <label for="user_name">Utilizador ou email</label>
-        <input type="text" id="user_name" name="user_name" required>
+        <div class="login-card">
+            <img src="<?php echo BASE_URL; ?>CSS/images/agsv_logo.png" alt="AGSV" class="login-mobile-logo" width="640" height="521">
 
-        <label for="password">Palavra-passe</label>
-        <input type="password" id="password" name="password" required>
+            <div class="login-heading">
+                <span class="login-kicker">Acesso à plataforma</span>
+                <h1>Entrar</h1>
+                <p>Introduz os teus dados para entrar.</p>
+            </div>
 
-        <button type="submit" class="btn btn-primary">Entrar</button>
-    </form>
-</section>
+            <?php if ($erro != ""): ?>
+                <div class="login-alert" role="alert">
+                    <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                    <span><?php echo htmlspecialchars($erro); ?></span>
+                </div>
+            <?php endif; ?>
 
-<?php require __DIR__ . "/../includes/footer.php"; ?>
+            <?php mostrarFlash(); ?>
+
+            <form method="post" action="" class="login-form">
+                <div class="login-field">
+                    <label for="user_name">Utilizador ou email</label>
+                    <div class="login-input-wrap">
+                        <i class="fa-regular fa-user" aria-hidden="true"></i>
+                        <input
+                            type="text"
+                            id="user_name"
+                            name="user_name"
+                            placeholder="teu@email.com"
+                            autocomplete="username"
+                            value="<?php echo htmlspecialchars($_POST["user_name"] ?? ""); ?>"
+                            <?php echo $erro != "" ? 'aria-invalid="true"' : ""; ?>
+                            required
+                            autofocus
+                        >
+                    </div>
+                </div>
+
+                <div class="login-field">
+                    <label for="password">Palavra-passe</label>
+                    <div class="login-input-wrap">
+                        <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                        <input
+                            type="password"
+                            id="password"
+                            name="password"
+                            placeholder="A tua palavra-passe"
+                            autocomplete="current-password"
+                            <?php echo $erro != "" ? 'aria-invalid="true"' : ""; ?>
+                            required
+                        >
+                        <button type="button" class="password-toggle" data-password-toggle aria-controls="password" aria-pressed="false" aria-label="Mostrar palavra-passe" title="Mostrar palavra-passe">
+                            <i class="fa-solid fa-eye" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary login-submit">
+                    <span>Entrar</span>
+                    <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                </button>
+            </form>
+
+            <p class="login-help">Problemas a entrar? Contacta o administrador do sistema.</p>
+            <div class="login-links">
+                <a class="login-back" href="index.php"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar ao site público</a>
+            </div>
+        </div>
+    </main>
+</div>
+
+</body>
+</html>

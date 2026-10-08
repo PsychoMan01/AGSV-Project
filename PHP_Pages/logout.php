@@ -9,6 +9,7 @@ session_destroy();
 
 // Como a sessão foi destruída, iniciamos uma nova só para mostrar a mensagem
 session_start();
+session_regenerate_id(true);
 $_SESSION["flash_tipo"] = "success";
 $_SESSION["flash_mensagem"] = "Sessão terminada com sucesso.";
 

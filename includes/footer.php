@@ -1,8 +1,9 @@
-</main>
-<footer class="site-footer">
-    <div class="container">
-        <p>&copy; <?= date('Y') ?> AGSV — Sistema de Gestão de Competições de Ginástica.</p>
+        </main>
+        <footer class="site-footer">
+            <div><strong>AGSV</strong><span>Associação de Ginástica de São Vicente</span></div>
+            <span>&copy; <?php echo date('Y'); ?> · Sistema de Gestão de Competições</span>
+        </footer>
     </div>
-</footer>
+</div>
 </body>
 </html>

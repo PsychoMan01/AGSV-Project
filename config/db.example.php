@@ -14,8 +14,8 @@ define("BASE_URL", "/");
 
 // Dados de acesso à base de dados
 $db_host = "localhost";
-$db_user = "root";
-$db_pass = "mysql";
+$db_user = "utilizador";
+$db_pass = "palavra-passe";
 $db_name = "AGSV_db";
 
 // Ligação simples ao MySQL

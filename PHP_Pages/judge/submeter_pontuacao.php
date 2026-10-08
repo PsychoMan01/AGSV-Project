@@ -5,11 +5,12 @@
 require_once __DIR__ . "/../../config/db.php";
 require_once __DIR__ . "/../../includes/functions.php";
 
-// Só juízes podem ver esta página
-if (!isset($_SESSION["user_id"]) || $_SESSION["user_role"] != "JUDGE") {
-    header("Location: " . BASE_URL . "PHP_Pages/login.php");
-    exit;
-}
+// Só juízes com conta ativa podem ver esta página
+requireActiveJudge($conn);
+
+// Esta página processa submissões de pontuação por POST: exigir sempre um
+// token CSRF válido antes de gravar seja o que for.
+exigirCsrf();
 
 $user_id = $_SESSION["user_id"];
 
@@ -38,11 +39,9 @@ if (isset($_GET["assignment_id"])) {
 }
 
 // Ir buscar os dados da atribuição, e confirmar que pertence a este juiz
-$sql2 = "SELECT ja.*, comp.name AS competition_name, cat.name AS category_name, eq.name AS equipment_name
+$sql2 = "SELECT ja.*, comp.name AS competition_name
          FROM judge_assignments ja
          JOIN competitions comp ON comp.id = ja.competition_id
-         JOIN categories cat ON cat.id = ja.category_id
-         JOIN equipments eq ON eq.id = ja.equipment_id
          WHERE ja.id = ? AND ja.judge_id = ?
          LIMIT 1";
 
@@ -60,12 +59,26 @@ if (!$atribuicao) {
 
 $erros = array();
 
-// O papel desta atribuição diz quais campos este juiz pode pontuar.
-// Ex: um juiz com papel "DB" só vê/pontua DB1 e DB2; um juiz "E" só vê/pontua
-// E1, E2, E3, E4 e penal. Isto evita que um juiz preencha campos que não são
-// da sua responsabilidade.
+// O papel + número desta atribuição dizem qual é o ÚNICO campo que este
+// juiz pontua. Ex: um juiz com papel "A" e número 2 só vê/pontua o campo
+// A2 (não A1, A3 nem A4 — esses são responsabilidade de outros juízes).
+// Isto evita que um juiz preencha campos que não são da sua responsabilidade.
 $papel_juiz = $atribuicao["papel"];
-$campos_formulario = camposPorPapel($papel_juiz);
+$numero_juiz = (int) $atribuicao["numero_juiz"];
+$campo_principal = campoPorNumero($papel_juiz, $numero_juiz);
+
+if ($campo_principal === null) {
+    setFlash("error", "Esta atribuição tem um número de juiz inválido. Fala com o administrador.");
+    header("Location: painel.php");
+    exit;
+}
+
+// O campo principal deste juiz (ex: "A2"); juízes de papel "E" também
+// registam a penalização, que continua a ser um campo à parte.
+$campos_formulario = array($campo_principal);
+if ($papel_juiz == "E") {
+    $campos_formulario[] = "penal";
+}
 
 // Todos os campos possíveis na tabela "scores" (para sabermos quais ficam a NULL)
 $todos_os_campos = array("DB1", "DB2", "DA1", "DA2", "A1", "A2", "A3", "A4", "E1", "E2", "E3", "E4", "penal");
@@ -75,15 +88,31 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     $event_entry_id = (int) $_POST["event_entry_id"];
 
+    // Uma nota já submetida por este juiz fica bloqueada para edição por
+    // omissão. Só é possível voltar a gravar sobre ela se o administrador
+    // tiver dado autorização pontual (scores.pode_editar = 1) em "Notas" —
+    // confirmamos isto aqui no servidor, e não só ao esconder o formulário,
+    // para não ser possível contornar a proteção.
+    $sql_bloqueio = "SELECT id, pode_editar FROM scores WHERE event_entry_id = ? AND judge_id = ? LIMIT 1";
+    $stmt_bloqueio = mysqli_prepare($conn, $sql_bloqueio);
+    mysqli_stmt_bind_param($stmt_bloqueio, "ii", $event_entry_id, $judge_id);
+    mysqli_stmt_execute($stmt_bloqueio);
+    $nota_existente_bloqueio = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_bloqueio));
+
+    if ($nota_existente_bloqueio && (int) $nota_existente_bloqueio["pode_editar"] !== 1) {
+        $erros[] = "Esta nota já foi submetida e está bloqueada para edição. Pede ao administrador para autorizar a edição em \"Notas\".";
+    }
+
     // Só lemos e validamos os campos que pertencem ao papel deste juiz
     $valores = array();
 
     foreach ($campos_formulario as $campo) {
         $valor = isset($_POST[$campo]) ? $_POST[$campo] : "";
-        if ($valor === "" || !is_numeric($valor)) {
-            $erros[] = "O campo " . $campo . " tem de ser um número.";
+        if ($valor === "" || !validarNotaJuiz($valor)) {
+            $erros[] = "O campo " . $campo . " tem de ser um número válido (não pode ser negativo, texto, nem um valor absurdamente alto).";
+        } else {
+            $valores[$campo] = (float) $valor;
         }
-        $valores[$campo] = (float) $valor;
     }
 
     if (count($erros) == 0) {
@@ -103,16 +132,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $subtotal = round($subtotal, 3);
 
         // Confirmar que a entrada do atleta pertence mesmo a esta competição/escalão/aparelho
-        $sql3 = "SELECT id, athlete_id FROM event_entries
-                 WHERE id = ? AND competition_id = ? AND category_id = ? AND equipment_id = ?
+        $sql3 = "SELECT id, athlete_id, equipment_id FROM event_entries
+                 WHERE id = ? AND competition_id = ?
                  LIMIT 1";
         $stmt3 = mysqli_prepare($conn, $sql3);
         mysqli_stmt_bind_param(
-            $stmt3, "iiii",
+            $stmt3, "ii",
             $event_entry_id,
-            $atribuicao["competition_id"],
-            $atribuicao["category_id"],
-            $atribuicao["equipment_id"]
+            $atribuicao["competition_id"]
         );
         mysqli_stmt_execute($stmt3);
         $resultado3 = mysqli_stmt_get_result($stmt3);
@@ -145,10 +172,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
             if ($pontuacao_existente) {
                 // Já existe: atualizar a pontuação já submetida por este juiz
+                // A edição volta a ficar bloqueada depois de usada (pode_editar
+                // = 0): a autorização do administrador serve para uma única
+                // correção, não fica válida para sempre.
                 $sql4 = "UPDATE scores
                          SET score_value = ?, DB1 = ?, DB2 = ?, DA1 = ?, DA2 = ?,
                              A1 = ?, A2 = ?, A3 = ?, A4 = ?, E1 = ?, E2 = ?, E3 = ?, E4 = ?,
-                             penal = ?, submitted_at = NOW()
+                             penal = ?, submitted_at = NOW(), pode_editar = 0
                          WHERE id = ?";
 
                 $stmt4 = mysqli_prepare($conn, $sql4);
@@ -164,7 +194,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     $pontuacao_existente["id"]
                 );
 
-                $mensagem_sucesso = "Pontuação (" . papelLabel($papel_juiz) . ") atualizada com sucesso: " . number_format($subtotal, 3, ",", ".") . ".";
+                $mensagem_sucesso = "Pontuação (" . campoNumeroLabel($papel_juiz, $numero_juiz) . ") atualizada com sucesso: " . number_format($subtotal, 3, ",", ".") . ".";
             } else {
                 // Ainda não existe: criar uma nova linha de pontuação
                 $sql4 = "INSERT INTO scores
@@ -184,13 +214,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     $valores_bind["A1"], $valores_bind["A2"], $valores_bind["A3"], $valores_bind["A4"],
                     $valores_bind["E1"], $valores_bind["E2"], $valores_bind["E3"], $valores_bind["E4"],
                     $valores_bind["penal"],
-                    $atribuicao["competition_id"], $event_entry_id, $athlete_id, $judge_id, $atribuicao["equipment_id"]
+                    $atribuicao["competition_id"], $event_entry_id, $athlete_id, $judge_id, $entrada["equipment_id"]
                 );
 
-                $mensagem_sucesso = "Pontuação (" . papelLabel($papel_juiz) . ") submetida com sucesso: " . number_format($subtotal, 3, ",", ".") . ".";
+                $mensagem_sucesso = "Pontuação (" . campoNumeroLabel($papel_juiz, $numero_juiz) . ") submetida com sucesso: " . number_format($subtotal, 3, ",", ".") . ".";
             }
 
             if (mysqli_stmt_execute($stmt4)) {
+                // Recalcular já as classificações (por aparelho e a geral, que
+                // depende delas) para a tabela pública ficar sempre atualizada
+                // assim que uma nota é introduzida, sem o admin ter de clicar
+                // manualmente em "Calcular Classificações".
+                calcularClassificacoes($conn, $atribuicao["competition_id"]);
+
                 setFlash("success", $mensagem_sucesso);
                 header("Location: submeter_pontuacao.php?assignment_id=" . $assignment_id);
                 exit;
@@ -202,21 +238,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 }
 
 // --- Lista de atletas inscritos neste escalão/aparelho/competição ---
+// Inclui a nota já submetida por este juiz (se existir) via LEFT JOIN, para
+// a mostrar pré-preenchida no formulário e para saber se está bloqueada
+// (pode_editar) — $campo_principal vem de campoPorNumero(), uma lista fixa
+// de nomes de coluna, por isso é seguro interpolar aqui.
 $sql5 = "SELECT ee.id AS event_entry_id, ee.bib_number, a.name AS athlete_name,
-                (SELECT COUNT(*) FROM scores s WHERE s.event_entry_id = ee.id AND s.judge_id = ?) AS ja_pontuado
+                c.name AS category_name, eq.name AS equipment_name,
+                s.id AS score_id, s.pode_editar,
+                s.$campo_principal AS valor_atual, s.penal AS penal_atual
          FROM event_entries ee
          JOIN athletes a ON a.id = ee.athlete_id
-         WHERE ee.competition_id = ? AND ee.category_id = ? AND ee.equipment_id = ?
-         ORDER BY ee.bib_number ASC";
+         JOIN categories c ON c.id = ee.category_id
+         JOIN equipments eq ON eq.id = ee.equipment_id
+         LEFT JOIN scores s ON s.event_entry_id = ee.id AND s.judge_id = ?
+         WHERE ee.competition_id = ?
+         ORDER BY ee.bib_number ASC, a.name ASC";
 
 $stmt5 = mysqli_prepare($conn, $sql5);
-mysqli_stmt_bind_param(
-    $stmt5, "iiii",
-    $judge_id,
-    $atribuicao["competition_id"],
-    $atribuicao["category_id"],
-    $atribuicao["equipment_id"]
-);
+mysqli_stmt_bind_param($stmt5, "ii", $judge_id, $atribuicao["competition_id"]);
 mysqli_stmt_execute($stmt5);
 $resultado5 = mysqli_stmt_get_result($stmt5);
 
@@ -230,60 +269,91 @@ require __DIR__ . "/../../includes/header.php";
 ?>
 
 <section class="page-intro">
-    <a href="painel.php">&larr; Voltar ao painel</a>
+    <a class="back-link" href="painel.php"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar ao painel</a>
     <h1>Pontuar atletas</h1>
-    <p>
-        <strong>Competição:</strong> <?php echo htmlspecialchars($atribuicao["competition_name"]); ?><br>
-        <strong>Escalão:</strong> <?php echo htmlspecialchars($atribuicao["category_name"]); ?><br>
-        <strong>Aparelho:</strong> <?php echo htmlspecialchars($atribuicao["equipment_name"]); ?><br>
-        <strong>O teu papel:</strong> <?php echo htmlspecialchars(papelLabel($papel_juiz)); ?>
-    </p>
+    <ul class="meta-list">
+        <li><i class="fa-solid fa-trophy" aria-hidden="true"></i> <strong><?php echo htmlspecialchars($atribuicao["competition_name"]); ?></strong></li>
+        <li><i class="fa-solid fa-gavel" aria-hidden="true"></i> <?php echo htmlspecialchars(papelLabel($papel_juiz)); ?></li>
+        <li>O teu número: <span class="badge badge-code"><?php echo htmlspecialchars(campoNumeroLabel($papel_juiz, $numero_juiz)); ?></span></li>
+    </ul>
     <p class="hint">
-        Como juiz de <?php echo htmlspecialchars(papelLabel($papel_juiz)); ?>, só precisas de preencher os campos abaixo.
+        Como juiz <?php echo htmlspecialchars(campoNumeroLabel($papel_juiz, $numero_juiz)); ?>, só precisas de preencher a tua nota abaixo<?php echo $papel_juiz == "E" ? " (e a penalização, se houver)" : ""; ?>.
     </p>
 </section>
 
-<?php foreach ($erros as $erro): ?>
-    <div class="alert alert-error"><?php echo htmlspecialchars($erro); ?></div>
-<?php endforeach; ?>
+<?php mostrarErros($erros); ?>
 <?php mostrarFlash(); ?>
 
 <?php if (count($entradas) == 0): ?>
 
-    <p>Não existem atletas inscritos neste escalão/aparelho.</p>
+    <section class="card">
+        <div class="empty-state">
+            <i class="fa-solid fa-user-group" aria-hidden="true"></i>
+            <h3>Sem atletas para pontuar</h3>
+            <p>Não existem atletas inscritos nesta competição.</p>
+        </div>
+    </section>
 
 <?php else: ?>
 
+    <div class="score-list">
     <?php foreach ($entradas as $entrada): ?>
-        <div class="score-card">
-            <h3>
-                Dorsal <?php echo htmlspecialchars($entrada["bib_number"]); ?> —
-                <?php echo htmlspecialchars($entrada["athlete_name"]); ?>
-
-                <?php if ($entrada["ja_pontuado"] > 0): ?>
-                    <span class="badge badge-active">Já pontuado por ti</span>
+        <?php
+        $ja_pontuado = $entrada["score_id"] !== null;
+        $bloqueada = $ja_pontuado && (int) $entrada["pode_editar"] !== 1;
+        $valores_atuais = array(
+            $campo_principal => $entrada["valor_atual"],
+            "penal"          => $entrada["penal_atual"],
+        );
+        $id_entrada = (int) $entrada["event_entry_id"];
+        ?>
+        <article class="score-card<?php echo $bloqueada ? " is-locked" : ""; ?>" aria-labelledby="atleta-<?php echo $id_entrada; ?>">
+            <div class="score-head">
+                <div class="score-bib" title="Dorsal"><?php echo $entrada["bib_number"] !== "" && $entrada["bib_number"] !== null ? htmlspecialchars($entrada["bib_number"]) : "—"; ?></div>
+                <div class="score-athlete">
+                    <h3 id="atleta-<?php echo $id_entrada; ?>"><?php echo htmlspecialchars($entrada["athlete_name"]); ?></h3>
+                    <p><?php echo htmlspecialchars($entrada["category_name"]); ?> · <?php echo htmlspecialchars($entrada["equipment_name"]); ?></p>
+                </div>
+                <?php if ($ja_pontuado): ?>
+                    <div class="score-badges">
+                        <span class="badge badge-active">Já pontuado por ti</span>
+                        <?php if ($bloqueada): ?>
+                            <span class="badge badge-inactive">Bloqueada para edição</span>
+                        <?php else: ?>
+                            <span class="badge badge-info">Edição autorizada</span>
+                        <?php endif; ?>
+                    </div>
                 <?php endif; ?>
-            </h3>
+            </div>
 
             <form method="post" action="" class="score-form">
+                <?php echo csrfField(); ?>
                 <input type="hidden" name="assignment_id" value="<?php echo $assignment_id; ?>">
-                <input type="hidden" name="event_entry_id" value="<?php echo $entrada['event_entry_id']; ?>">
+                <input type="hidden" name="event_entry_id" value="<?php echo $id_entrada; ?>">
 
                 <div class="score-grid">
                     <?php foreach ($campos_formulario as $campo): ?>
                         <label>
-                            <?php echo $campo; ?>
-                            <input type="number" step="0.001" name="<?php echo $campo; ?>" required>
+                            <?php echo $campo === "penal" ? "Penalização" : $campo; ?>
+                            <input type="number" step="0.001" min="0" max="100" inputmode="decimal" name="<?php echo $campo; ?>"
+                                   value="<?php echo $valores_atuais[$campo] !== null ? htmlspecialchars($valores_atuais[$campo]) : ""; ?>"
+                                   <?php echo $bloqueada ? "disabled" : "required"; ?>>
                         </label>
                     <?php endforeach; ?>
                 </div>
 
-                <button type="submit" class="btn btn-primary">
-                    <?php echo $entrada["ja_pontuado"] > 0 ? "Atualizar pontuação" : "Submeter pontuação"; ?>
+                <button type="submit" class="btn btn-primary" <?php echo $bloqueada ? "disabled" : ""; ?>>
+                    <i class="fa-solid <?php echo $ja_pontuado ? "fa-rotate" : "fa-check"; ?>" aria-hidden="true"></i>
+                    <?php echo $ja_pontuado ? "Atualizar pontuação" : "Submeter pontuação"; ?>
                 </button>
             </form>
-        </div>
+
+            <?php if ($bloqueada): ?>
+                <p class="hint hint-warning">Já submeteste esta nota. Pede ao administrador para autorizar a edição em "Notas" se precisares de a corrigir.</p>
+            <?php endif; ?>
+        </article>
     <?php endforeach; ?>
+    </div>
 
 <?php endif; ?>
 
